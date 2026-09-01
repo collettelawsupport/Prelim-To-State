@@ -19,7 +19,7 @@ import {
   saveRegistration,
 } from '../lib/store.mts';
 import type { RegistrationRecord } from '../lib/types.mts';
-import { normalizeRegistrationValues, normalizeSubmissionKey } from '../lib/workflow.mts';
+import { normalizeRegistrationValues, normalizeRegistrationWorkflow, normalizeSubmissionKey } from '../lib/workflow.mts';
 
 async function ensureInvoice(record: RegistrationRecord) {
   let activeRecord = record;
@@ -70,17 +70,19 @@ export default async function submitRegistration(request: Request) {
   try {
     const parsed = await readJsonBody(request);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new HttpError('The registration information is missing.');
+    const workflow = normalizeRegistrationWorkflow('workflow' in parsed ? parsed.workflow : null);
     if ('botField' in parsed && String(parsed.botField).trim()) {
-      return json('Registration received.', 200, { checkoutUrl: '/' });
+      return json('Registration received.', 200, { checkoutUrl: workflow === 'honor_roll' ? '/honor-roll/' : '/' });
     }
     const submissionKey = normalizeSubmissionKey('submissionKey' in parsed ? parsed.submissionKey : null);
-    const normalized = normalizeRegistrationValues('values' in parsed ? parsed.values : null);
+    const normalized = normalizeRegistrationValues('values' in parsed ? parsed.values : null, workflow);
     await assertRegistrationWorkflowReady();
-    record = await getRegistrationByRequest(submissionKey);
+    record = await getRegistrationByRequest(workflow, submissionKey);
     if (!record) {
       const now = new Date().toISOString();
       record = await createRegistration({
         id: randomUUID(),
+        workflow,
         submissionKey,
         statusToken: randomBytes(32).toString('base64url'),
         workflowToken: randomBytes(32).toString('base64url'),

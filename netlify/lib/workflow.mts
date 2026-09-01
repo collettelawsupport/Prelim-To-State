@@ -1,24 +1,39 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { publicQuickBooksInvoiceUrl } from './invoice-url.mts';
 import {
-  DEPOSIT_CENTS,
+  HONOR_ROLL_OPTIONAL_DISCOUNT,
   ageDivisions,
   ageUnits,
   entryLevelFor,
+  registrationConfigurationFor,
   requiredRegistrationFields,
   usStates,
 } from '../../app/registration-data.ts';
 import { HttpError } from './http.mts';
-import type { BigFormFeeLine, BigFormFeeSummary, RegistrationRecord, RegistrationValues } from './types.mts';
+import type { BigFormFeeLine, BigFormFeeSummary, RegistrationRecord, RegistrationValues, RegistrationWorkflow } from './types.mts';
 
 const MAX_TEXT = 2_000;
+const DISCOUNTED_OPTIONAL_FIELDS = new Set([
+  'miss_photogenic',
+  'livin_doll',
+  'commercial_print',
+  'pro_am_modeling',
+  'optional_talent',
+  'prettiest_and_bests',
+  'practice_interview',
+]);
 const ALLOWED_FIELDS = new Set<string>([
   ...requiredRegistrationFields,
   'signature_name',
   'signature_data',
 ]);
 
-export function normalizeRegistrationValues(input: unknown) {
+export function normalizeRegistrationWorkflow(value: unknown): RegistrationWorkflow {
+  if (value === 'prelim' || value === 'honor_roll') return value;
+  throw new HttpError('The registration form is not valid. Please use the original registration link.');
+}
+
+export function normalizeRegistrationValues(input: unknown, workflow: RegistrationWorkflow = 'prelim') {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new HttpError('The registration information is missing.');
   }
@@ -40,7 +55,7 @@ export function normalizeRegistrationValues(input: unknown) {
 
   const age = Number(values.contestant_age);
   if (!Number.isInteger(age) || age < 0 || age > 120) throw new HttpError('Please enter a valid contestant age.');
-  const entryLevel = entryLevelFor(values.entry_level);
+  const entryLevel = entryLevelFor(values.entry_level, workflow);
   if (!entryLevel) throw new HttpError('Please choose a valid entry level.');
   if (values.release_accepted !== 'yes') throw new HttpError('The release must be accepted before registering.');
   if (values.signature_kind === 'typed' && !values.signature_name) throw new HttpError('Please type the parent or guardian signature.');
@@ -49,7 +64,11 @@ export function normalizeRegistrationValues(input: unknown) {
   }
   if (!['typed', 'drawn'].includes(values.signature_kind)) throw new HttpError('Please choose a valid signature method.');
 
-  return { values, entryFeeCents: entryLevel.feeCents, depositCents: DEPOSIT_CENTS };
+  return {
+    values,
+    entryFeeCents: entryLevel.feeCents,
+    depositCents: registrationConfigurationFor(workflow).depositCents,
+  };
 }
 
 export function normalizeSubmissionKey(value: unknown) {
@@ -121,6 +140,7 @@ function descriptionLine(description: string) {
 }
 
 export function buildDepositInvoice(record: RegistrationRecord, registrationItemId: string) {
+  const configuration = registrationConfigurationFor(record.workflow);
   const name = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
   const deposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
   const remainingBalanceCents = Math.max(0, record.entryFeeCents - record.depositCents);
@@ -132,7 +152,7 @@ export function buildDepositInvoice(record: RegistrationRecord, registrationItem
     DueDate: new Date().toISOString().slice(0, 10),
     PrivateNote: `OLM registration ${record.id}`,
     CustomerMemo: {
-      value: `Deposit due now: ${deposit}. Remaining entry fee balance after deposit: ${remainingBalance}, still due on or before October 8, 2026. The deposit will be applied to the selected state competition entry fee.`,
+      value: `Deposit due now: ${deposit}. Remaining entry fee balance after deposit: ${remainingBalance}, still due on or before ${configuration.depositDueLabel}. The deposit will be applied to the selected state competition entry fee.`,
     },
     AllowOnlinePayment: true,
     AllowOnlineCreditCardPayment: true,
@@ -141,13 +161,21 @@ export function buildDepositInvoice(record: RegistrationRecord, registrationItem
   };
 }
 
-export function classificationForEntryLevel(entryLevel: string) {
-  if (!entryLevelFor(entryLevel)) throw new Error('The registration entry level does not have a contestant classification.');
-  return 'New Contestant';
+export function classificationForEntryLevel(entryLevel: string, workflow: RegistrationWorkflow = 'prelim') {
+  if (!entryLevelFor(entryLevel, workflow)) {
+    throw new Error('The registration entry level does not have a contestant classification.');
+  }
+  if (workflow === 'honor_roll') {
+    if (entryLevel === 'honor_roll') return 'Honor Roll';
+    if (entryLevel.startsWith('winners_circle_')) return "Winner's Circle";
+  } else {
+    return 'New Contestant';
+  }
+  throw new Error('The registration entry level does not have a contestant classification.');
 }
 
 export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigFormFeeSummary, registrationItemId: string, optionalItemId: string) {
-  const entry = entryLevelFor(record.values.entry_level);
+  const entry = entryLevelFor(record.values.entry_level, record.workflow);
   if (!entry) throw new Error('The registration entry level is no longer valid.');
   const entryDescription = `2026 state competition entry fee — ${entry.label}`;
   const paidDeposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
@@ -159,8 +187,16 @@ export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigForm
   for (const fee of fees.lines) {
     if (fee.status === 'pending' || !fee.amount || fee.amount <= 0) continue;
     const quantity = fee.quantity > 0 ? fee.quantity : 1;
-    const unitPrice = fee.rate !== null && fee.rate >= 0 ? fee.rate : fee.amount / quantity;
-    lines.push(salesLine(fee.amount, fee.description || fee.item, optionalItemId, quantity, unitPrice));
+    const receivesHonorRollDiscount = record.workflow === 'honor_roll'
+      && Boolean(fee.sourceField && DISCOUNTED_OPTIONAL_FIELDS.has(fee.sourceField));
+    const priceFactor = receivesHonorRollDiscount ? HONOR_ROLL_OPTIONAL_DISCOUNT : 1;
+    const amount = Math.round(fee.amount * priceFactor * 100) / 100;
+    const sourceUnitPrice = fee.rate !== null && fee.rate >= 0 ? fee.rate : fee.amount / quantity;
+    const unitPrice = Math.round(sourceUnitPrice * priceFactor * 100) / 100;
+    const description = receivesHonorRollDiscount
+      ? `${fee.description || fee.item} — Honor Roll 50% optional price`
+      : fee.description || fee.item;
+    lines.push(salesLine(amount, description, optionalItemId, quantity, unitPrice));
   }
   return lines;
 }
@@ -176,7 +212,7 @@ export function buildBigFormUrl(record: RegistrationRecord, baseUrl: string) {
   }
   url.searchParams.set('registration', record.id);
   url.searchParams.set('workflow_token', record.workflowToken);
-  url.searchParams.set('workflow', 'prelim');
+  url.searchParams.set('workflow', record.workflow);
   return url.toString();
 }
 
@@ -194,6 +230,7 @@ export function verifyWebhookSignature(rawBody: string, signature: string, verif
 
 export function publicStatus(record: RegistrationRecord) {
   return {
+    workflow: record.workflow,
     paid: Boolean(record.paidAt),
     paperworkComplete: Boolean(record.bigFormSubmissionId),
     invoiceUpdated: Boolean(record.invoiceUpdatedAt),

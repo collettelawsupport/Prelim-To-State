@@ -1,8 +1,8 @@
 import { getStore } from '@netlify/blobs';
-import type { RegistrationRecord } from './types.mts';
+import type { RegistrationRecord, RegistrationWorkflow } from './types.mts';
 
-const SANDBOX_STORE_NAME = 'olm-prelim-to-state';
-const PRODUCTION_STORE_NAME = 'olm-prelim-to-state-production';
+const SANDBOX_STORE_NAME = 'olm-state-registration';
+const PRODUCTION_STORE_NAME = 'olm-state-registration-production';
 
 export function registrationStoreName(environment = process.env.QBO_ENVIRONMENT) {
   return environment?.trim().toLowerCase() === 'production'
@@ -18,12 +18,12 @@ export async function createRegistration(record: RegistrationRecord) {
   const result = await store().setJSON(`registrations/${record.id}.json`, record, { onlyIfNew: true });
   if (!result.modified) throw new Error('Registration ID collision.');
   const mapping = await store().setJSON(
-    `requests/${record.submissionKey}.json`,
+    `requests/${record.workflow}/${record.submissionKey}.json`,
     { registrationId: record.id },
     { onlyIfNew: true },
   );
   if (!mapping.modified) {
-    const existing = await getRegistrationByRequest(record.submissionKey);
+    const existing = await getRegistrationByRequest(record.workflow, record.submissionKey);
     await store().delete(`registrations/${record.id}.json`);
     if (existing) return existing;
     throw new Error('The registration submission is already being processed.');
@@ -41,8 +41,8 @@ export async function getRegistration(id: string) {
   return store().get(`registrations/${id}.json`, { type: 'json' }) as Promise<RegistrationRecord | null>;
 }
 
-export async function getRegistrationByRequest(submissionKey: string) {
-  const mapping = await store().get(`requests/${submissionKey}.json`, { type: 'json' }) as { registrationId?: string } | null;
+export async function getRegistrationByRequest(workflow: RegistrationWorkflow, submissionKey: string) {
+  const mapping = await store().get(`requests/${workflow}/${submissionKey}.json`, { type: 'json' }) as { registrationId?: string } | null;
   return mapping?.registrationId ? getRegistration(mapping.registrationId) : null;
 }
 

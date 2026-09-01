@@ -6,6 +6,7 @@ import Link from 'next/link';
 export default function InvoiceCreatedPage() {
   const [invoiceUrl, setInvoiceUrl] = useState('');
   const [paid, setPaid] = useState(false);
+  const [registrationHome, setRegistrationHome] = useState('/');
   const [message, setMessage] = useState('Your QuickBooks deposit invoice has been created and emailed. Your registration is pending until the required deposit is paid.');
 
   useEffect(() => {
@@ -16,8 +17,9 @@ export default function InvoiceCreatedPage() {
     fetch(`/api/registration-status?id=${encodeURIComponent(registrationId)}&token=${encodeURIComponent(token)}`)
       .then((response) => response.json())
       .then((result: unknown) => {
-        const status = result as { invoiceUrl?: string; paid?: boolean };
+        const status = result as { invoiceUrl?: string; paid?: boolean; workflow?: string };
         if (status.invoiceUrl) setInvoiceUrl(status.invoiceUrl);
+        if (status.workflow === 'honor_roll') setRegistrationHome('/honor-roll/');
         if (status.paid) {
           setPaid(true);
           setMessage('Your deposit is paid and has been applied to the QuickBooks invoice. Watch your email for the Big Form link.');
@@ -34,7 +36,7 @@ export default function InvoiceCreatedPage() {
         <h1>{paid ? 'Payment received' : 'Complete your deposit'}</h1>
         <p>{message}</p>
         {invoiceUrl && <a className="button-primary link-button" href={invoiceUrl}>{paid ? 'View QuickBooks invoice' : 'Pay QuickBooks invoice'}</a>}
-        <Link className="text-link" href="/">Return to registration</Link>
+        <Link className="text-link" href={registrationHome}>Return to registration</Link>
       </section>
     </main>
   );

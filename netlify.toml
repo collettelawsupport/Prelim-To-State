@@ -9,6 +9,15 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+# Keep the two public registration experiences separate while serving both from
+# this one deployment. The Honor Roll domain must be assigned to this Netlify
+# project as a domain alias before this rewrite becomes active.
+[[redirects]]
+  from = "https://honorrollregistration.texasourlittlemiss.net/"
+  to = "/honor-roll/"
+  status = 200
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]

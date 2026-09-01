@@ -5,8 +5,8 @@ export const metadata: Metadata = { title: 'Privacy Policy — Texas Our Little 
 
 export default function PrivacyPage() {
   return (
-    <LegalShell eyebrow="Effective August 31, 2026" title="Privacy Policy">
-      <p>This policy describes how Texas Our Little Miss handles information submitted through the Prelim-to-State Registration service and its connected QuickBooks Online workflow.</p>
+    <LegalShell eyebrow="Effective September 1, 2026" title="Privacy Policy">
+      <p>This policy describes how Texas Our Little Miss handles information submitted through its state registration services, including the separate Preliminary and Honor Roll contestant forms and their shared QuickBooks Online workflow.</p>
 
       <h2>Information we collect</h2>
       <p>We collect the contestant and chaperone information entered on the registration form, including names, contestant date of birth and age, address, phone number, email address, division, entry selection, electronic signature, and release acceptance. We also maintain operational records such as submission identifiers, timestamps, workflow status, selected fees, and QuickBooks customer and invoice identifiers.</p>

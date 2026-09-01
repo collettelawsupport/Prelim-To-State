@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { registrationConfigurationFor } from '../../app/registration-data.ts';
 import type { RegistrationRecord } from './types.mts';
 
 export type InvitationEmailProvider = 'gmail' | 'resend';
@@ -19,6 +20,7 @@ function escapeHtml(value: string) {
 }
 
 export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormUrl: string) {
+  const configuration = registrationConfigurationFor(record.workflow);
   const contestant = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
   const deposit = (record.depositCents / 100).toLocaleString('en-US', {
     style: 'currency',
@@ -35,9 +37,9 @@ export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormU
       'Complete the contestant Big Form here:',
       bigFormUrl,
       '',
-      'After the Big Form is submitted, QuickBooks will email the updated invoice with the remaining entry fee and selected optional competitions.',
+      configuration.invitationCompletionCopy,
     ].join('\n'),
-    html: `<div style="font-family:Arial,sans-serif;line-height:1.55;color:#321b28;max-width:640px"><h2 style="margin-bottom:12px">Deposit received</h2><p>Thank you! We received the ${deposit} state registration deposit for <strong>${safeContestant}</strong>.</p><p>The next step is to complete the contestant Big Form:</p><p style="margin:28px 0"><a href="${safeBigFormUrl}" style="display:inline-block;background:#70264f;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:8px">Complete the Big Form</a></p><p style="font-size:14px;color:#654b5b">If the button does not open, use this link:<br><a href="${safeBigFormUrl}">${safeBigFormUrl}</a></p><p>After the Big Form is submitted, QuickBooks will email the updated invoice with the remaining entry fee and selected optional competitions.</p></div>`,
+    html: `<div style="font-family:Arial,sans-serif;line-height:1.55;color:#321b28;max-width:640px"><h2 style="margin-bottom:12px">Deposit received</h2><p>Thank you! We received the ${deposit} state registration deposit for <strong>${safeContestant}</strong>.</p><p>The next step is to complete the contestant Big Form:</p><p style="margin:28px 0"><a href="${safeBigFormUrl}" style="display:inline-block;background:#70264f;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:8px">Complete the Big Form</a></p><p style="font-size:14px;color:#654b5b">If the button does not open, use this link:<br><a href="${safeBigFormUrl}">${safeBigFormUrl}</a></p><p>${escapeHtml(configuration.invitationCompletionCopy)}</p></div>`,
   };
 }
 

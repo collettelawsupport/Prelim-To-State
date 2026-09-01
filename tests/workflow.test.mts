@@ -70,6 +70,7 @@ const values = {
 
 const record: RegistrationRecord = {
   id: '11111111-1111-4111-8111-111111111111',
+  workflow: 'prelim',
   submissionKey: '22222222-2222-4222-8222-222222222222',
   statusToken: 'status-token',
   workflowToken: 'workflow-token',
@@ -317,8 +318,8 @@ test('scheduled reconciliation is configured every five minutes', () => {
 });
 
 test('keeps production registrations and OAuth tokens isolated from sandbox data', () => {
-  assert.equal(registrationStoreName('sandbox'), 'olm-prelim-to-state');
-  assert.equal(registrationStoreName('production'), 'olm-prelim-to-state-production');
+  assert.equal(registrationStoreName('sandbox'), 'olm-state-registration');
+  assert.equal(registrationStoreName('production'), 'olm-state-registration-production');
   assert.notEqual(registrationStoreName('sandbox'), registrationStoreName('production'));
 });
 

@@ -5,8 +5,8 @@ export const metadata: Metadata = { title: 'Terms of Use — Texas Our Little Mi
 
 export default function TermsPage() {
   return (
-    <LegalShell eyebrow="Effective August 31, 2026" title="Terms of Use">
-      <p>These terms govern use of the Texas Our Little Miss Prelim-to-State Registration service, including its connected QuickBooks Online invoicing workflow.</p>
+    <LegalShell eyebrow="Effective September 1, 2026" title="Terms of Use">
+      <p>These terms govern use of the Texas Our Little Miss state registration services, including the separate Preliminary and Honor Roll contestant forms and their shared QuickBooks Online invoicing workflow.</p>
 
       <h2>Authorized use</h2>
       <p>The registration form must be completed by a contestant&apos;s parent or legal guardian, or by a contestant who is legally able to register on her own behalf. The private QuickBooks connection and disconnection pages are for authorized Texas Our Little Miss administrators only.</p>

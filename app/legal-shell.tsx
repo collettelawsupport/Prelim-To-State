@@ -5,11 +5,11 @@ export function LegalShell({ eyebrow, title, children }: { eyebrow: string; titl
   return (
     <main className="legal-page">
       <header className="site-header">
-        <Link className="brand" href="/" aria-label="Texas Our Little Miss Prelim registration home">
+        <Link className="brand" href="/" aria-label="Texas Our Little Miss state registration home">
           <span className="brand-mark" aria-hidden="true">OLM</span>
           <span>Texas Our Little Miss</span>
         </Link>
-        <span className="secure-note">Prelim registration</span>
+        <span className="secure-note">Secure state registration</span>
       </header>
       <article className="legal-card">
         <p className="eyebrow">{eyebrow}</p>

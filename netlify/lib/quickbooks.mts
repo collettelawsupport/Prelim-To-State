@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { registrationConfigurationFor } from '../../app/registration-data.ts';
 import { HttpError } from './http.mts';
 import { publicQuickBooksInvoiceUrl } from './invoice-url.mts';
 import {
@@ -108,7 +109,7 @@ export async function assertRegistrationWorkflowReady(
 ) {
   const missing = missingRegistrationWorkflowSettings(environment);
   if (missing.length) {
-    logger.warn('Prelim registration workflow configuration is incomplete.', { missing });
+    logger.warn('State registration workflow configuration is incomplete.', { missing });
     throw new HttpError(
       'Online invoice registration is temporarily unavailable while setup is completed. Please contact registration support.',
       503,
@@ -417,7 +418,8 @@ export function quickBooksCustomerIdFromQuery(result: unknown) {
 }
 
 export function registrationInvoiceDocNumber(record: RegistrationRecord) {
-  return `OLM-P-${record.id.replace(/-/g, '').slice(0, 15)}`;
+  const workflowPrefix = record.workflow === 'honor_roll' ? 'H' : 'P';
+  return `OLM-${workflowPrefix}-${record.id.replace(/-/g, '').slice(0, 15)}`;
 }
 
 export function quickBooksInvoiceFromQuery(result: unknown) {
@@ -536,6 +538,7 @@ export async function updatePaidInvoiceMessage(record: RegistrationRecord, bigFo
 }
 
 export async function updateInvoiceFromBigForm(record: RegistrationRecord, fees: BigFormFeeSummary) {
+  const configuration = registrationConfigurationFor(record.workflow);
   const invoiceId = record.qbo?.invoiceId;
   const customerId = record.qbo?.customerId;
   if (!invoiceId || !customerId) throw new Error('The registration has no QuickBooks invoice.');
@@ -555,9 +558,9 @@ export async function updateInvoiceFromBigForm(record: RegistrationRecord, fees:
     CustomerRef: { value: customerId },
     BillEmail: { Address: record.values.email },
     TxnDate: typeof current.TxnDate === 'string' ? current.TxnDate : new Date().toISOString().slice(0, 10),
-    DueDate: '2026-10-08',
+    DueDate: configuration.finalInvoiceDueDate,
     PrivateNote: `OLM registration ${record.id}; Big Form ${record.bigFormSubmissionId || 'received'}`,
-    CustomerMemo: { value: `Your Big Form has been received. The $${record.depositCents / 100} deposit remains applied. The remaining entry fee and known selected optional competitions are included.${pendingNote}` },
+    CustomerMemo: { value: `Your Big Form has been received. The $${record.depositCents / 100} deposit remains applied. ${configuration.finalInvoiceMemo}${pendingNote}` },
     AllowOnlinePayment: true,
     AllowOnlineCreditCardPayment: true,
     AllowOnlineACHPayment: true,
@@ -583,5 +586,6 @@ export function registrationFallbackUrl(record: RegistrationRecord) {
   const url = new URL('/invoice-created/', `${siteUrl()}/`);
   url.searchParams.set('registration', record.id);
   url.searchParams.set('token', record.statusToken);
+  url.searchParams.set('workflow', record.workflow);
   return url.toString();
 }

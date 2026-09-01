@@ -23,7 +23,7 @@ export default async function paperworkComplete(request: Request) {
     const record = await getRegistration(registrationId);
     if (!record || !secureEqual(workflowToken, record.workflowToken)) throw new HttpError('Registration not found.', 404);
     if (!record.paidAt) throw new HttpError('The registration deposit has not been marked paid.', 409);
-    if (contestantClassification !== classificationForEntryLevel(record.values.entry_level)) {
+    if (contestantClassification !== classificationForEntryLevel(record.values.entry_level, record.workflow)) {
       throw new HttpError('The contestant classification does not match the paid registration.', 409);
     }
     if (record.invoiceUpdatedAt && record.bigFormSubmissionId === submissionId) {

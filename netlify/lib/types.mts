@@ -1,4 +1,5 @@
 export type RegistrationValues = Record<string, string>;
+export type RegistrationWorkflow = 'prelim' | 'honor_roll';
 
 export type RegistrationStatus =
   | 'submitted'
@@ -10,6 +11,7 @@ export type RegistrationStatus =
 
 export type RegistrationRecord = {
   id: string;
+  workflow: RegistrationWorkflow;
   submissionKey: string;
   statusToken: string;
   workflowToken: string;

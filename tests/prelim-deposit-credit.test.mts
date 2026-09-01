@@ -36,6 +36,7 @@ test('New Contestants retain the full $150 paid registration credit', () => {
   assert.equal(classificationForEntryLevel(normalized.values.entry_level), 'New Contestant');
 
   const record = {
+    workflow: 'prelim',
     values: normalized.values,
     entryFeeCents: normalized.entryFeeCents,
     depositCents: normalized.depositCents,
