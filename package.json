@@ -17,11 +17,13 @@
     "@netlify/blobs": "^11.0.2",
     "@netlify/functions": "^6.0.0",
     "next": "^16.3.3",
+    "nodemailer": "^9.1.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.4",

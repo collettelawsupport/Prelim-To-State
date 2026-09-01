@@ -118,6 +118,12 @@ export default function RegistrationPage() {
   const [saveStatus, setSaveStatus] = useState('Draft ready');
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'submitting'>('idle');
   const [submissionError, setSubmissionError] = useState('');
+  const [submissionSupportUrl, setSubmissionSupportUrl] = useState('');
+  const [submissionReconnectUrl, setSubmissionReconnectUrl] = useState('');
+  const [workflowAvailability, setWorkflowAvailability] = useState<'checking' | 'ready' | 'unavailable'>('checking');
+  const [workflowAvailabilityMessage, setWorkflowAvailabilityMessage] = useState('Checking the secure QuickBooks payment connection…');
+  const [workflowSupportUrl, setWorkflowSupportUrl] = useState('/support/');
+  const [workflowReconnectUrl, setWorkflowReconnectUrl] = useState('');
   const formRef = useRef<HTMLFormElement>(null);
 
   useEffect(() => {
@@ -145,6 +151,36 @@ export default function RegistrationPage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    fetch('/api/registration-readiness', { cache: 'no-store' })
+      .then(async (response) => {
+        const result = await response.json().catch(() => ({})) as {
+          message?: string;
+          workflowReady?: boolean;
+          reconnectRequired?: boolean;
+          reconnectUrl?: string;
+          supportUrl?: string;
+        };
+        if (!active) return;
+        if (response.ok && result.workflowReady) {
+          setWorkflowAvailability('ready');
+          setWorkflowAvailabilityMessage('Secure QuickBooks invoicing is ready.');
+          return;
+        }
+        setWorkflowAvailability('unavailable');
+        setWorkflowAvailabilityMessage(result.message || 'Online invoice registration is temporarily unavailable.');
+        setWorkflowSupportUrl(result.supportUrl || '/support/');
+        if (result.reconnectRequired) setWorkflowReconnectUrl(result.reconnectUrl || '/connect/');
+      })
+      .catch(() => {
+        if (!active) return;
+        setWorkflowAvailability('unavailable');
+        setWorkflowAvailabilityMessage('Online invoice registration is temporarily unavailable. Please contact registration support.');
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     if (!draftReady || !submissionKey) return;
     const timer = window.setTimeout(() => {
       const draft: SavedDraft = { values, currentStep, submissionKey };
@@ -163,6 +199,8 @@ export default function RegistrationPage() {
   const setValue = (name: string, value: string) => {
     setValues((currentValues) => ({ ...currentValues, [name]: value }));
     setSubmissionError('');
+    setSubmissionSupportUrl('');
+    setSubmissionReconnectUrl('');
   };
 
   const scrollToForm = () => {
@@ -193,6 +231,8 @@ export default function RegistrationPage() {
 
   const goBack = () => {
     setSubmissionError('');
+    setSubmissionSupportUrl('');
+    setSubmissionReconnectUrl('');
     setCurrentStep((step) => Math.max(step - 1, 0));
     scrollToForm();
   };
@@ -200,6 +240,8 @@ export default function RegistrationPage() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSubmissionError('');
+    setSubmissionSupportUrl('');
+    setSubmissionReconnectUrl('');
     if (!validateStep()) return;
 
     setSubmissionStatus('submitting');
@@ -217,13 +259,24 @@ export default function RegistrationPage() {
       const result = await response.json().catch(() => ({ message: 'The server returned an unexpected response.' })) as {
         message?: string;
         checkoutUrl?: string;
+        reconnectRequired?: boolean;
+        reconnectUrl?: string;
+        supportUrl?: string;
       };
-      if (!response.ok || !result.checkoutUrl) throw new Error(result.message || 'The QuickBooks invoice could not be started.');
+      if (!response.ok || !result.checkoutUrl) {
+        setSubmissionStatus('idle');
+        setSubmissionError(result.message || 'The required QuickBooks payment could not be started.');
+        if (result.reconnectRequired) {
+          setSubmissionSupportUrl(result.supportUrl || '/support/');
+          setSubmissionReconnectUrl(result.reconnectUrl || '/connect/');
+        }
+        return;
+      }
       window.localStorage.removeItem(STORAGE_KEY);
       window.location.assign(result.checkoutUrl);
     } catch (error) {
       setSubmissionStatus('idle');
-      setSubmissionError(error instanceof Error ? error.message : 'The QuickBooks invoice could not be started. Please try again.');
+      setSubmissionError(error instanceof Error ? error.message : 'The required QuickBooks payment could not be started. Please try again.');
     }
   };
 
@@ -234,7 +287,7 @@ export default function RegistrationPage() {
           <span className="brand-mark" aria-hidden="true">OLM</span>
           <span>Texas Our Little Miss</span>
         </a>
-        <span className="secure-note">Secure registration · QuickBooks invoice</span>
+        <span className="secure-note">Secure registration · Payment required</span>
       </header>
 
       <section className="hero" id="top">
@@ -264,6 +317,15 @@ export default function RegistrationPage() {
             ))}
           </nav>
 
+          {workflowAvailability !== 'ready' && (
+            <article className="info-panel important-panel" role="status">
+              <h3>{workflowAvailability === 'checking' ? 'Checking payment connection' : 'Online registration temporarily paused'}</h3>
+              <p>{workflowAvailabilityMessage}</p>
+              {workflowAvailability === 'unavailable' && <p><a className="text-link" href={workflowSupportUrl}>Contact registration support</a></p>}
+              {workflowReconnectUrl && <p><a className="text-link" href={workflowReconnectUrl}>Texas OLM administrator: reconnect QuickBooks</a></p>}
+            </article>
+          )}
+
           <section data-step="0" hidden={currentStep !== 0} aria-labelledby="step-0-title">
             <div className="section-heading">
               <p>Step 1 of 3</p>
@@ -272,7 +334,7 @@ export default function RegistrationPage() {
             </div>
             <article className="info-panel welcome-panel">
               <h3>Welcome, preliminary contestants!</h3>
-              <p>Complete this registration and the $100 deposit invoice to secure the contestant&apos;s state registration and contestant number.</p>
+              <p>Complete this registration and the {formatCurrency(DEPOSIT_CENTS)} deposit payment to secure the contestant&apos;s state registration and contestant number.</p>
             </article>
             <div className="field-grid">
               <label className="field"><span>Contestant first name <RequiredMark /></span><input type="text" required={currentStep === 0} autoComplete="given-name" value={values.contestant_first_name || ''} onChange={(event) => setValue('contestant_first_name', event.target.value)} /></label>
@@ -304,7 +366,7 @@ export default function RegistrationPage() {
             </article>
             <fieldset className="choice-field">
               <legend>Entry level <RequiredMark /></legend>
-              <p className="field-help">The required $100 deposit is subtracted from the selected entry fee.</p>
+              <p className="field-help">The required {formatCurrency(DEPOSIT_CENTS)} deposit is subtracted from the selected entry fee.</p>
               <div className="choice-grid">
                 {entryLevels.map((level) => (
                   <label className="choice" key={level.value}>
@@ -327,8 +389,8 @@ export default function RegistrationPage() {
           <section data-step="2" hidden={currentStep !== 2} aria-labelledby="step-2-title">
             <div className="section-heading">
               <p>Step 3 of 3</p>
-              <h2 id="step-2-title">Release and QuickBooks invoice</h2>
-              <span>Review the release, sign electronically, and continue to the secure $100 invoice from QuickBooks.</span>
+              <h2 id="step-2-title">Release and required payment</h2>
+              <span>Review the release, sign electronically, and continue directly to the secure {formatCurrency(DEPOSIT_CENTS)} payment screen from QuickBooks.</span>
             </div>
             <article className="info-panel release-panel">
               <h3>Release information</h3>
@@ -350,10 +412,10 @@ export default function RegistrationPage() {
               <input type="checkbox" required={currentStep === 2} checked={values.release_accepted === 'yes'} onChange={(event) => setValue('release_accepted', event.target.checked ? 'yes' : '')} />
               <span>I am the contestant&apos;s parent or legal guardian (or the contestant is of legal age), and I agree to the release above. <RequiredMark /></span>
             </label>
-            <aside className="invoice-summary" aria-label="Invoice summary">
-              <p>QuickBooks invoice</p>
-              <div><span>Required deposit</span><strong>{formatCurrency(DEPOSIT_CENTS)}</strong></div>
-              <small>QuickBooks will email the same invoice to {values.email || 'the email address entered above'}. After the deposit is paid, the contestant receives the Big Form. Completing that form updates this invoice with the remaining entry fee and selected optionals.</small>
+            <aside className="invoice-summary" aria-label="Required payment summary">
+              <p>Required QuickBooks payment</p>
+              <div><span>Deposit due now</span><strong>{formatCurrency(DEPOSIT_CENTS)}</strong></div>
+              <small>Selecting Continue creates and emails the QuickBooks invoice, then opens its secure payment screen. The registration remains pending and the contestant&apos;s place is not secured until the deposit is paid. QuickBooks applies the payment to this invoice automatically. After payment, the contestant receives the Big Form; completing it updates this invoice with the remaining entry fee and selected optionals.</small>
             </aside>
           </section>
 
@@ -361,14 +423,22 @@ export default function RegistrationPage() {
             <div className="action-meta">
               <span>{saveStatus}</span>
               {submissionError && <p role="alert">{submissionError}</p>}
+              {submissionSupportUrl && <a className="text-link" href={submissionSupportUrl}>Contact registration support</a>}
+              {submissionReconnectUrl && <a className="text-link" href={submissionReconnectUrl}>Texas OLM administrator: reconnect QuickBooks</a>}
             </div>
             <div className="action-buttons">
               {currentStep > 0 && <button className="button-secondary" type="button" onClick={goBack}>Back</button>}
               {currentStep < registrationSteps.length - 1 ? (
                 <button className="button-primary" type="button" onClick={goNext}>Continue <span aria-hidden="true">→</span></button>
               ) : (
-                <button className="button-primary" type="submit" disabled={submissionStatus === 'submitting'}>
-                  {submissionStatus === 'submitting' ? 'Creating invoice…' : 'Continue to $100 invoice'}
+                <button className="button-primary" type="submit" disabled={submissionStatus === 'submitting' || workflowAvailability !== 'ready'}>
+                  {submissionStatus === 'submitting'
+                    ? 'Opening secure payment…'
+                    : workflowAvailability === 'checking'
+                      ? 'Checking payment connection…'
+                      : workflowAvailability === 'unavailable'
+                        ? 'Online registration temporarily paused'
+                        : `Continue to secure ${formatCurrency(DEPOSIT_CENTS)} payment`}
                 </button>
               )}
             </div>
@@ -376,7 +446,11 @@ export default function RegistrationPage() {
         </form>
       </div>
 
-      <footer><span>Texas Our Little Miss</span><small>Natural beauty · Poise · Confidence · Scholarship</small></footer>
+      <footer>
+        <span>Texas Our Little Miss</span>
+        <nav aria-label="Legal and support links"><a href="/privacy/">Privacy</a><a href="/terms/">Terms</a><a href="/support/">Support</a></nav>
+        <small>Natural beauty · Poise · Confidence · Scholarship</small>
+      </footer>
     </main>
   );
 }

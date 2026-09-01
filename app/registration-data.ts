@@ -1,4 +1,4 @@
-export const DEPOSIT_CENTS = 10_000;
+export const DEPOSIT_CENTS = 15_000;
 
 export const ageUnits = ['months', 'years'] as const;
 
@@ -39,7 +39,7 @@ export const registrationSteps = [
 ] as const;
 
 export const importantInformation = [
-  'Required deposit: $100. The deposit is subtracted from the selected entry fee.',
+  'Required deposit: $150. The deposit is subtracted from the selected entry fee.',
   'Contestants who attended a preliminary pageant receive the discounted entry fee associated with their placement.',
   'The entry fee includes registration, all required competitions, one chaperone badge, contestant and chaperone meal and party tickets, a souvenir program book, and downloadable professional competition photos.',
   'Big Forms, photos, good luck messages, and ads are due October 8, 2026.',

@@ -1,4 +1,5 @@
 import type { Config } from '@netlify/functions';
+import { safeErrorDetails } from '../lib/http.mts';
 import { completeQuickBooksAuthorization } from '../lib/quickbooks.mts';
 
 export default async function quickBooksCallback(request: Request) {
@@ -14,7 +15,7 @@ export default async function quickBooksCallback(request: Request) {
     );
     return Response.redirect(new URL('/connect/?connected=1', url.origin), 302);
   } catch (error) {
-    console.error('QuickBooks OAuth callback failed.', error);
+    console.error('QuickBooks OAuth callback failed.', safeErrorDetails(error));
     return new Response('QuickBooks authorization could not be completed. You may close this page and try again.', { status: 400 });
   }
 }

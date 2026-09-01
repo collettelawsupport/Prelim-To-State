@@ -1,8 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Config } from '@netlify/functions';
-import { DEPOSIT_CENTS } from '../../app/registration-data.ts';
-import { HttpError, errorResponse, json, readJsonBody } from '../lib/http.mts';
+import { HttpError, errorResponse, json, readJsonBody, safeErrorDetails } from '../lib/http.mts';
+import { publicQuickBooksInvoiceUrl } from '../lib/invoice-url.mts';
 import {
+  assertRegistrationWorkflowReady,
   createCustomer,
   createDepositInvoice,
   registrationFallbackUrl,
@@ -10,34 +11,56 @@ import {
 } from '../lib/quickbooks.mts';
 import {
   createRegistration,
+  claimDepositInvoice,
+  getRegistration,
   getRegistrationByRequest,
   mapInvoice,
+  releaseDepositInvoiceClaim,
   saveRegistration,
 } from '../lib/store.mts';
 import type { RegistrationRecord } from '../lib/types.mts';
 import { normalizeRegistrationValues, normalizeSubmissionKey } from '../lib/workflow.mts';
 
 async function ensureInvoice(record: RegistrationRecord) {
-  record.qbo ||= {};
-  if (!record.qbo.customerId) {
-    record.qbo.customerId = await createCustomer(record);
-    await saveRegistration(record);
+  let activeRecord = record;
+  activeRecord.qbo ||= {};
+  if (!activeRecord.qbo.invoiceId) {
+    if (!await claimDepositInvoice(activeRecord.id)) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        const refreshed = await getRegistration(activeRecord.id);
+        if (refreshed?.qbo?.invoiceId) {
+          activeRecord = refreshed;
+          break;
+        }
+      }
+      if (!activeRecord.qbo?.invoiceId) {
+        throw new HttpError('Your QuickBooks invoice is already being prepared. Please try again in a moment.', 409);
+      }
+    } else {
+      try {
+        if (!activeRecord.qbo.customerId) {
+          activeRecord.qbo.customerId = await createCustomer(activeRecord);
+          await saveRegistration(activeRecord);
+        }
+        const invoice = await createDepositInvoice(activeRecord);
+        activeRecord.qbo = { ...activeRecord.qbo, ...invoice };
+        activeRecord.status = 'invoice_created';
+        await saveRegistration(activeRecord);
+        await mapInvoice(invoice.invoiceId, activeRecord.id);
+      } finally {
+        await releaseDepositInvoiceClaim(activeRecord.id).catch(() => undefined);
+      }
+    }
   }
-  if (!record.qbo.invoiceId) {
-    const invoice = await createDepositInvoice(record);
-    record.qbo = { ...record.qbo, ...invoice };
-    record.status = 'invoice_created';
-    await saveRegistration(record);
-    await mapInvoice(invoice.invoiceId, record.id);
-  }
-  if (!record.qbo.invoiceId) throw new Error('The QuickBooks invoice ID is missing.');
-  const sent = await sendInvoice(record.qbo.invoiceId, record.values.email);
-  record.qbo.invoiceNumber = sent.invoiceNumber || record.qbo.invoiceNumber;
-  record.qbo.invoiceUrl = sent.invoiceUrl || record.qbo.invoiceUrl;
-  record.status = record.paidAt ? 'paid' : 'invoice_created';
-  delete record.lastError;
-  await saveRegistration(record);
-  return record.qbo.invoiceUrl || registrationFallbackUrl(record);
+  if (!activeRecord.qbo.invoiceId) throw new Error('The QuickBooks invoice ID is missing.');
+  const sent = await sendInvoice(activeRecord.qbo.invoiceId, activeRecord.values.email);
+  activeRecord.qbo.invoiceNumber = sent.invoiceNumber || activeRecord.qbo.invoiceNumber;
+  activeRecord.qbo.invoiceUrl = sent.invoiceUrl || publicQuickBooksInvoiceUrl(activeRecord.qbo.invoiceUrl);
+  activeRecord.status = activeRecord.paidAt ? 'paid' : 'invoice_created';
+  delete activeRecord.lastError;
+  await saveRegistration(activeRecord);
+  return activeRecord.qbo.invoiceUrl || registrationFallbackUrl(activeRecord);
 }
 
 export default async function submitRegistration(request: Request) {
@@ -52,6 +75,7 @@ export default async function submitRegistration(request: Request) {
     }
     const submissionKey = normalizeSubmissionKey('submissionKey' in parsed ? parsed.submissionKey : null);
     const normalized = normalizeRegistrationValues('values' in parsed ? parsed.values : null);
+    await assertRegistrationWorkflowReady();
     record = await getRegistrationByRequest(submissionKey);
     if (!record) {
       const now = new Date().toISOString();
@@ -65,18 +89,19 @@ export default async function submitRegistration(request: Request) {
         status: 'submitted',
         values: normalized.values,
         entryFeeCents: normalized.entryFeeCents,
-        depositCents: DEPOSIT_CENTS,
+        depositCents: normalized.depositCents,
       });
     }
 
     const checkoutUrl = await ensureInvoice(record);
-    return json('Your QuickBooks invoice is ready.', 201, { registrationId: record.id, checkoutUrl });
+    return json('Your required QuickBooks payment is ready.', 201, { registrationId: record.id, checkoutUrl });
   } catch (error) {
+    if (error instanceof HttpError) return errorResponse(error, 'The QuickBooks invoice could not be created.');
     if (record) {
       record.status = 'invoice_error';
       record.lastError = error instanceof Error ? error.message.slice(0, 1_000) : 'Unknown QuickBooks error';
       await saveRegistration(record).catch(() => undefined);
-      console.error('QuickBooks invoice creation failed.', error);
+      console.error('QuickBooks invoice creation failed.', safeErrorDetails(error));
       return json('Your registration was saved, but the QuickBooks invoice could not be created. Please try again in a moment.', 502);
     }
     return errorResponse(error, 'The registration could not be saved. Please try again.');

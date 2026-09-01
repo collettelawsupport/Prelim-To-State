@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { publicQuickBooksInvoiceUrl } from './invoice-url.mts';
 import {
   DEPOSIT_CENTS,
   ageDivisions,
@@ -48,7 +49,7 @@ export function normalizeRegistrationValues(input: unknown) {
   }
   if (!['typed', 'drawn'].includes(values.signature_kind)) throw new HttpError('Please choose a valid signature method.');
 
-  return { values, entryFeeCents: entryLevel.feeCents };
+  return { values, entryFeeCents: entryLevel.feeCents, depositCents: DEPOSIT_CENTS };
 }
 
 export function normalizeSubmissionKey(value: unknown) {
@@ -80,8 +81,10 @@ export function normalizeBigFormFees(input: unknown): BigFormFeeSummary {
       ? String(raw.status) as BigFormFeeLine['status']
       : 'known';
     return {
+      category: 'category' in raw && typeof raw.category === 'string' ? raw.category.trim().slice(0, 240) : '',
       item,
       description: 'description' in raw && typeof raw.description === 'string' ? raw.description.trim().slice(0, 1_000) : '',
+      sourceField: 'sourceField' in raw && typeof raw.sourceField === 'string' ? raw.sourceField.trim().slice(0, 120) : '',
       quantity,
       rate: 'rate' in raw ? cleanMoney(raw.rate) : null,
       amount: 'amount' in raw ? cleanMoney(raw.amount) : null,
@@ -119,18 +122,28 @@ function descriptionLine(description: string) {
 
 export function buildDepositInvoice(record: RegistrationRecord, registrationItemId: string) {
   const name = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
+  const deposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const remainingBalanceCents = Math.max(0, record.entryFeeCents - record.depositCents);
+  const remainingBalance = (remainingBalanceCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
   return {
     CustomerRef: { value: record.qbo?.customerId },
     BillEmail: { Address: record.values.email },
     TxnDate: new Date().toISOString().slice(0, 10),
     DueDate: new Date().toISOString().slice(0, 10),
     PrivateNote: `OLM registration ${record.id}`,
-    CustomerMemo: { value: `Required deposit for ${name}. The deposit will be applied to the selected state competition entry fee.` },
+    CustomerMemo: {
+      value: `Deposit due now: ${deposit}. Remaining entry fee balance after deposit: ${remainingBalance}, still due on or before October 8, 2026. The deposit will be applied to the selected state competition entry fee.`,
+    },
     AllowOnlinePayment: true,
     AllowOnlineCreditCardPayment: true,
     AllowOnlineACHPayment: true,
-    Line: [salesLine(DEPOSIT_CENTS / 100, `2026 Texas Our Little Miss required registration deposit — ${name}`, registrationItemId)],
+    Line: [salesLine(record.depositCents / 100, `2026 Texas Our Little Miss registration deposit due now - ${name}`, registrationItemId)],
   };
+}
+
+export function classificationForEntryLevel(entryLevel: string) {
+  if (!entryLevelFor(entryLevel)) throw new Error('The registration entry level does not have a contestant classification.');
+  return 'New Contestant';
 }
 
 export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigFormFeeSummary, registrationItemId: string, optionalItemId: string) {
@@ -153,9 +166,17 @@ export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigForm
 }
 
 export function buildBigFormUrl(record: RegistrationRecord, baseUrl: string) {
-  const url = new URL(baseUrl);
+  const trimmedBaseUrl = baseUrl.trim();
+  const normalizedBaseUrl = /^[a-z][a-z\d+.-]*:/i.test(trimmedBaseUrl)
+    ? trimmedBaseUrl
+    : `https://${trimmedBaseUrl}`;
+  const url = new URL(normalizedBaseUrl);
+  if (!['http:', 'https:'].includes(url.protocol)) {
+    throw new Error('BIG_FORM_URL must use HTTP or HTTPS.');
+  }
   url.searchParams.set('registration', record.id);
   url.searchParams.set('workflow_token', record.workflowToken);
+  url.searchParams.set('workflow', 'prelim');
   return url.toString();
 }
 
@@ -176,6 +197,6 @@ export function publicStatus(record: RegistrationRecord) {
     paid: Boolean(record.paidAt),
     paperworkComplete: Boolean(record.bigFormSubmissionId),
     invoiceUpdated: Boolean(record.invoiceUpdatedAt),
-    invoiceUrl: record.qbo?.invoiceUrl || '',
+    invoiceUrl: publicQuickBooksInvoiceUrl(record.qbo?.invoiceUrl),
   };
 }

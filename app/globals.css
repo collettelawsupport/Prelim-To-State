@@ -162,6 +162,18 @@ button { touch-action: manipulation; }
 
 footer { min-height: 110px; padding: 30px max(24px, calc((100vw - 980px) / 2)); display: flex; align-items: center; justify-content: space-between; gap: 20px; color: #d9c9cf; background: var(--plum-dark); font-size: 12px; }
 footer span { color: white; font: 500 17px/1 Georgia, serif; }
+footer nav { display: flex; flex-wrap: wrap; gap: 16px; }
+footer a { color: white; text-underline-offset: 3px; }
+
+.legal-page { min-height: 100vh; background: var(--cream); }
+.legal-card { width: min(860px, calc(100% - 32px)); margin: 52px auto 72px; padding: clamp(30px, 6vw, 64px); background: white; border: 1px solid var(--line); border-radius: 20px; box-shadow: 0 22px 55px rgba(47,21,34,.1); }
+.legal-card h1 { margin: 0 0 28px; color: var(--plum-dark); font: 500 clamp(36px, 7vw, 56px)/1.05 Georgia, serif; letter-spacing: -.03em; }
+.legal-card h2 { margin: 30px 0 8px; color: var(--plum); font: 600 22px/1.25 Georgia, serif; }
+.legal-card p { margin: 0; color: #594d52; font-size: 15px; line-height: 1.75; }
+.legal-card p + p { margin-top: 18px; }
+.legal-card a:not(.button-primary) { color: var(--plum); text-underline-offset: 3px; }
+.legal-button { width: fit-content; margin-top: 8px; }
+.legal-footer nav { margin-left: auto; }
 
 .center-page { min-height: 100vh; padding: 40px 20px; display: grid; place-items: center; color: white; text-align: center; background: radial-gradient(circle at 20% 15%, rgba(221,159,177,.22), transparent 24%), linear-gradient(145deg, #682747, var(--plum-dark)); }
 .center-card { width: min(620px, 100%); padding: clamp(36px, 8vw, 70px); color: var(--ink); background: var(--cream); border-radius: 23px; box-shadow: 0 30px 80px rgba(36,8,24,.28); }
@@ -197,6 +209,7 @@ footer span { color: white; font: 500 17px/1 Georgia, serif; }
   .action-buttons, .action-buttons button { width: 100%; }
   .action-buttons button { flex: 1; }
   footer { align-items: flex-start; flex-direction: column; }
+  .legal-footer nav { margin-left: 0; }
 }
 
 @media (max-width: 430px) {

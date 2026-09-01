@@ -20,15 +20,33 @@ export async function readJsonBody(request: Request, maxLength = 250_000) {
 
 export class HttpError extends Error {
   status: number;
+  details: Record<string, unknown>;
 
-  constructor(message: string, status = 400) {
+  constructor(message: string, status = 400, details: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
+    this.details = details;
   }
 }
 
+export function safeErrorDetails(error: unknown) {
+  if (!error || typeof error !== 'object') return {};
+  const candidate = error as {
+    name?: unknown;
+    status?: unknown;
+    errorCode?: unknown;
+    intuitTid?: unknown;
+  };
+  return {
+    ...(typeof candidate.name === 'string' ? { name: candidate.name } : {}),
+    ...(typeof candidate.status === 'number' ? { status: candidate.status } : {}),
+    ...(typeof candidate.errorCode === 'string' && candidate.errorCode ? { errorCode: candidate.errorCode } : {}),
+    ...(typeof candidate.intuitTid === 'string' && candidate.intuitTid ? { intuitTid: candidate.intuitTid } : {}),
+  };
+}
+
 export function errorResponse(error: unknown, fallback: string) {
-  if (error instanceof HttpError) return json(error.message, error.status);
-  console.error(fallback, error);
+  if (error instanceof HttpError) return json(error.message, error.status, error.details);
+  console.error(fallback, safeErrorDetails(error));
   return json(fallback, 500);
 }

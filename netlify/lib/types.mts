@@ -27,15 +27,17 @@ export type RegistrationRecord = {
   };
   paidAt?: string;
   bigFormInvitationSentAt?: string;
-  bigFormInvitationMethod?: 'resend' | 'quickbooks';
+  bigFormInvitationMethod?: 'gmail' | 'resend' | 'quickbooks';
   bigFormSubmissionId?: string;
   invoiceUpdatedAt?: string;
   lastError?: string;
 };
 
 export type BigFormFeeLine = {
+  category?: string;
   item: string;
   description?: string;
+  sourceField?: string;
   quantity: number;
   rate: number | null;
   amount: number | null;

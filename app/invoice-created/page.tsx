@@ -5,7 +5,8 @@ import Link from 'next/link';
 
 export default function InvoiceCreatedPage() {
   const [invoiceUrl, setInvoiceUrl] = useState('');
-  const [message, setMessage] = useState('Your $100 QuickBooks invoice has been created and emailed.');
+  const [paid, setPaid] = useState(false);
+  const [message, setMessage] = useState('Your QuickBooks deposit invoice has been created and emailed. Your registration is pending until the required deposit is paid.');
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);
@@ -17,7 +18,10 @@ export default function InvoiceCreatedPage() {
       .then((result: unknown) => {
         const status = result as { invoiceUrl?: string; paid?: boolean };
         if (status.invoiceUrl) setInvoiceUrl(status.invoiceUrl);
-        if (status.paid) setMessage('Your deposit is paid. Watch your email for the Big Form link.');
+        if (status.paid) {
+          setPaid(true);
+          setMessage('Your deposit is paid and has been applied to the QuickBooks invoice. Watch your email for the Big Form link.');
+        }
       })
       .catch(() => undefined);
   }, []);
@@ -27,9 +31,9 @@ export default function InvoiceCreatedPage() {
       <section className="center-card">
         <div className="success-mark" aria-hidden="true">✓</div>
         <p className="eyebrow">Registration received</p>
-        <h1>Check your email</h1>
+        <h1>{paid ? 'Payment received' : 'Complete your deposit'}</h1>
         <p>{message}</p>
-        {invoiceUrl && <a className="button-primary link-button" href={invoiceUrl}>Open QuickBooks invoice</a>}
+        {invoiceUrl && <a className="button-primary link-button" href={invoiceUrl}>{paid ? 'View QuickBooks invoice' : 'Pay QuickBooks invoice'}</a>}
         <Link className="text-link" href="/">Return to registration</Link>
       </section>
     </main>
