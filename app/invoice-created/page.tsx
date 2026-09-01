@@ -5,7 +5,7 @@ import Link from 'next/link';
 
 export default function InvoiceCreatedPage() {
   const [invoiceUrl, setInvoiceUrl] = useState('');
-  const [message, setMessage] = useState('Your $150 QuickBooks invoice has been created and emailed.');
+  const [message, setMessage] = useState('Your $100 QuickBooks invoice has been created and emailed.');
 
   useEffect(() => {
     const search = new URLSearchParams(window.location.search);

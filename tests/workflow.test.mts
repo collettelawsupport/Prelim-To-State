@@ -41,7 +41,7 @@ const record: RegistrationRecord = {
   status: 'invoice_created',
   values,
   entryFeeCents: 37_000,
-  depositCents: 15_000,
+  depositCents: 10_000,
   qbo: { customerId: '42', invoiceId: '99' },
 };
 
@@ -58,10 +58,10 @@ test('requires an actual signature for the selected signature method', () => {
   );
 });
 
-test('builds a $150 deposit-only QuickBooks invoice', () => {
+test('builds a $100 deposit-only QuickBooks invoice', () => {
   const invoice = buildDepositInvoice(record, '7');
   assert.equal(invoice.Line.length, 1);
-  assert.equal(invoice.Line[0].Amount, 150);
+  assert.equal(invoice.Line[0].Amount, 100);
   assert.equal(invoice.CustomerRef.value, '42');
   assert.equal(invoice.AllowOnlineCreditCardPayment, true);
 });
@@ -75,7 +75,9 @@ test('replaces the deposit line with the full entry fee and known Big Form optio
     ],
   });
   const lines = buildFinalInvoiceLines(record, fees, '7', '8');
-  assert.deepEqual(lines.map((line) => line.Amount), [370, 50]);
+  assert.deepEqual(lines.map((line) => line.Amount), [370, 0, 50]);
+  assert.equal(lines[1].DetailType, 'DescriptionOnly');
+  assert.match(lines[1].Description, /deposit previously paid.*\$100\.00 credit remains applied/i);
   assert.equal(fees.pendingCount, 1);
   assert.equal(fees.knownTotal, 50);
 });

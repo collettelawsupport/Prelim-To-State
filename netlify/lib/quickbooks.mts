@@ -226,7 +226,7 @@ export async function updateInvoiceFromBigForm(record: RegistrationRecord, fees:
     TxnDate: typeof current.TxnDate === 'string' ? current.TxnDate : new Date().toISOString().slice(0, 10),
     DueDate: new Date().toISOString().slice(0, 10),
     PrivateNote: `OLM registration ${record.id}; Big Form ${record.bigFormSubmissionId || 'received'}`,
-    CustomerMemo: { value: `Your Big Form has been received. The $150 deposit remains applied to this updated invoice.${pendingNote}` },
+    CustomerMemo: { value: `Your Big Form has been received. The $${record.depositCents / 100} deposit remains applied to this updated invoice.${pendingNote}` },
     AllowOnlinePayment: true,
     AllowOnlineCreditCardPayment: true,
     AllowOnlineACHPayment: true,

@@ -7,11 +7,11 @@ The public form reproduces the information and entry-level pricing from the supp
 ## Workflow
 
 1. A contestant completes the registration form and signs the release.
-2. A Netlify Function saves the registration in Netlify Blobs, creates the contestant as a QuickBooks customer, creates a `$150` deposit invoice, enables QuickBooks online payments, and emails the invoice.
+2. A Netlify Function saves the registration in Netlify Blobs, creates the contestant as a QuickBooks customer, creates a `$100` deposit invoice, enables QuickBooks online payments, and emails the invoice.
 3. Intuit sends a signed `Payment` or `Invoice` webhook after the deposit is paid.
 4. The app emails the contestant a private Big Form link. If Resend is not configured, it adds the link to the paid QuickBooks invoice and emails the invoice again through QuickBooks.
 5. The Big Form sends its fee summary to the protected `/api/paperwork-complete` endpoint.
-6. The deposit-only invoice is replaced with the contestant's full placement-based entry fee plus every known Big Form optional charge. The existing `$150` payment remains applied, and QuickBooks emails the updated balance.
+6. The deposit-only invoice is replaced with the contestant's full placement-based entry fee plus every known Big Form optional charge. The existing `$100` payment remains applied, and QuickBooks emails the updated balance.
 
 Unknown or pending optional prices are deliberately left off the updated invoice and identified in its customer memo.
 
@@ -105,5 +105,5 @@ npm run build
 - Intuit webhook signatures are verified with HMAC-SHA256 over the untouched request body.
 - QuickBooks access tokens are refreshed automatically, and each newly rotated refresh token is saved back to Netlify Blobs.
 - The public status endpoint requires an independent random status token; a registration UUID by itself cannot reveal the invoice link.
-- The full entry fee replaces the original deposit line. The paid `$150` stays linked to that invoice, so QuickBooks calculates the remaining balance.
+- The full entry fee replaces the original deposit line. The paid `$100` stays linked to that invoice, so QuickBooks calculates the remaining balance.
 - Real customer data, OAuth credentials, webhook tokens, setup keys, and email API keys must never be added to the repository.

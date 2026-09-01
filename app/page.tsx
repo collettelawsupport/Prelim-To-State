@@ -272,7 +272,7 @@ export default function RegistrationPage() {
             </div>
             <article className="info-panel welcome-panel">
               <h3>Welcome, preliminary contestants!</h3>
-              <p>Complete this registration and the $150 deposit invoice to secure the contestant&apos;s state registration and contestant number.</p>
+              <p>Complete this registration and the $100 deposit invoice to secure the contestant&apos;s state registration and contestant number.</p>
             </article>
             <div className="field-grid">
               <label className="field"><span>Contestant first name <RequiredMark /></span><input type="text" required={currentStep === 0} autoComplete="given-name" value={values.contestant_first_name || ''} onChange={(event) => setValue('contestant_first_name', event.target.value)} /></label>
@@ -304,7 +304,7 @@ export default function RegistrationPage() {
             </article>
             <fieldset className="choice-field">
               <legend>Entry level <RequiredMark /></legend>
-              <p className="field-help">The required $150 deposit is subtracted from the selected entry fee.</p>
+              <p className="field-help">The required $100 deposit is subtracted from the selected entry fee.</p>
               <div className="choice-grid">
                 {entryLevels.map((level) => (
                   <label className="choice" key={level.value}>
@@ -328,7 +328,7 @@ export default function RegistrationPage() {
             <div className="section-heading">
               <p>Step 3 of 3</p>
               <h2 id="step-2-title">Release and QuickBooks invoice</h2>
-              <span>Review the release, sign electronically, and continue to the secure $150 invoice from QuickBooks.</span>
+              <span>Review the release, sign electronically, and continue to the secure $100 invoice from QuickBooks.</span>
             </div>
             <article className="info-panel release-panel">
               <h3>Release information</h3>
@@ -368,7 +368,7 @@ export default function RegistrationPage() {
                 <button className="button-primary" type="button" onClick={goNext}>Continue <span aria-hidden="true">→</span></button>
               ) : (
                 <button className="button-primary" type="submit" disabled={submissionStatus === 'submitting'}>
-                  {submissionStatus === 'submitting' ? 'Creating invoice…' : 'Continue to $150 invoice'}
+                  {submissionStatus === 'submitting' ? 'Creating invoice…' : 'Continue to $100 invoice'}
                 </button>
               )}
             </div>

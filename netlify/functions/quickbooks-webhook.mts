@@ -55,10 +55,12 @@ async function sendPaidInvitation(invoiceId: string) {
 }
 
 async function processInvoice(invoiceId: string) {
+  const record = await getRegistrationByInvoice(invoiceId);
+  if (!record) return;
   const invoice = await getInvoice(invoiceId);
   const total = Number(invoice.TotalAmt || 0);
   const balance = Number(invoice.Balance || 0);
-  if (total >= 150 && balance <= 0) await sendPaidInvitation(invoiceId);
+  if (total >= record.depositCents / 100 && balance <= 0) await sendPaidInvitation(invoiceId);
 }
 
 async function processEntity(entity: WebhookEntity) {
@@ -69,10 +71,7 @@ async function processEntity(entity: WebhookEntity) {
   }
   if (entity.name === 'Payment') {
     const payment = await getPayment(entity.id);
-    for (const [invoiceId, amount] of paymentInvoiceIds(payment)) {
-      if (amount >= 150) await sendPaidInvitation(invoiceId);
-      else await processInvoice(invoiceId);
-    }
+    for (const invoiceId of paymentInvoiceIds(payment).keys()) await processInvoice(invoiceId);
   }
 }
 

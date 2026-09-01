@@ -109,6 +109,14 @@ function salesLine(amount: number, description: string, itemId: string, quantity
   };
 }
 
+function descriptionLine(description: string) {
+  return {
+    Amount: 0,
+    Description: description.slice(0, 4_000),
+    DetailType: 'DescriptionOnly',
+  };
+}
+
 export function buildDepositInvoice(record: RegistrationRecord, registrationItemId: string) {
   const name = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
   return {
@@ -129,7 +137,11 @@ export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigForm
   const entry = entryLevelFor(record.values.entry_level);
   if (!entry) throw new Error('The registration entry level is no longer valid.');
   const entryDescription = `2026 state competition entry fee — ${entry.label}`;
-  const lines = [salesLine(entry.feeCents / 100, entryDescription, registrationItemId)];
+  const paidDeposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const lines = [
+    salesLine(entry.feeCents / 100, entryDescription, registrationItemId),
+    descriptionLine(`Registration deposit previously paid — ${paidDeposit} credit remains applied in QuickBooks.`),
+  ];
 
   for (const fee of fees.lines) {
     if (fee.status === 'pending' || !fee.amount || fee.amount <= 0) continue;
