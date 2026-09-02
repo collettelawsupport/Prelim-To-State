@@ -1,5 +1,4 @@
 import nodemailer from 'nodemailer';
-import { registrationConfigurationFor } from '../../app/registration-data.ts';
 import type { RegistrationRecord } from './types.mts';
 
 export type InvitationEmailProvider = 'gmail' | 'resend';
@@ -20,26 +19,91 @@ function escapeHtml(value: string) {
 }
 
 export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormUrl: string) {
-  const configuration = registrationConfigurationFor(record.workflow);
   const contestant = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
-  const deposit = (record.depositCents / 100).toLocaleString('en-US', {
-    style: 'currency',
-    currency: 'USD',
-  });
-  const safeContestant = escapeHtml(contestant);
   const safeBigFormUrl = escapeHtml(bigFormUrl);
 
   return {
     subject: `Deposit received - complete ${contestant}'s Big Form`,
     text: [
-      `Thank you! We received the ${deposit} state registration deposit for ${contestant}.`,
+      'Dear Texas Our Little Miss Family,',
       '',
-      'Complete the contestant Big Form here:',
+      'Congratulations on taking the next step and officially registering for the Texas Our Little Miss Official State Competition! We are so excited to welcome you to the Texas Our Little Miss family, and we can’t wait to see you in College Station, Texas, October 30–November 1!',
+      '',
+      'Now that you are officially registered, here are your next steps to help you prepare for an amazing state experience:',
+      '',
+      '💕 Complete Your BIG!! Forms',
+      '',
+      'Below is the link to your final Texas State forms. Please take some time to carefully review and complete all required information.',
+      '',
+      'Once your forms have been submitted, you will receive an invoice with your payment information.',
+      '',
+      'Texas State BIG Forms:',
       bigFormUrl,
       '',
-      configuration.invitationCompletionCopy,
+      '📱 Join Our Texas State Facebook Group',
+      '',
+      'Be sure to join our Texas Our Little Miss State Facebook Group! This group is one of our most important resources for preparing for state. We’ll share TONS of important announcements, updates, reminders, helpful information, and tips throughout the state season.',
+      '',
+      'All important state announcements will be posted in the group, so be sure to join and stay connected!',
+      '',
+      'Please also make sure your Local Director is your friend on Facebook so they can add you to the state group.',
+      '',
+      '📖 Read Your State Handbook',
+      '',
+      'Your Texas State Handbook is your GO-TO guide for everything you need to know about the state competition!',
+      '',
+      'Please take the time to read through it carefully and keep it handy throughout your state journey.',
+      '',
+      'Read it! Learn it! Love it! Re-read it again! ❤️',
+      '',
+      'Many of the questions you may have about the state competition can be answered right there in your handbook.',
+      '',
+      'We are SO excited to have you joining us! We can’t wait to watch your family experience all the fun, friendships, memories, and excitement that come with being part of the Texas Our Little Miss family.',
+      '',
+      'Thank you for choosing Texas Our Little Miss. We are looking forward to an incredible state weekend together!',
+      '',
+      'I can’t wait to see you soon in College Station! 👑✨',
+      '',
+      'With excitement,',
+      '',
+      'Angela',
+      'Texas Our Little Miss',
+      '',
+      'Angela Kyle and Julie Nice',
+      'Texas State Directors',
+      '4125 Brazewell Rd',
+      'Cleveland, Texas 77328',
+      '(936) 443-6565 (Angela Kyle)',
+      '(512) 525-5582 (Julie Nice)',
+      '',
+      '“If You Can Be Anything In The World, BE KIND”',
     ].join('\n'),
-    html: `<div style="font-family:Arial,sans-serif;line-height:1.55;color:#321b28;max-width:640px"><h2 style="margin-bottom:12px">Deposit received</h2><p>Thank you! We received the ${deposit} state registration deposit for <strong>${safeContestant}</strong>.</p><p>The next step is to complete the contestant Big Form:</p><p style="margin:28px 0"><a href="${safeBigFormUrl}" style="display:inline-block;background:#70264f;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:8px">Complete the Big Form</a></p><p style="font-size:14px;color:#654b5b">If the button does not open, use this link:<br><a href="${safeBigFormUrl}">${safeBigFormUrl}</a></p><p>${escapeHtml(configuration.invitationCompletionCopy)}</p></div>`,
+    html: `<div style="font-family:Arial,sans-serif;line-height:1.65;color:#321b28;max-width:680px">
+      <p>Dear Texas Our Little Miss Family,</p>
+      <p>Congratulations on taking the next step and officially registering for the <strong>Texas Our Little Miss Official State Competition!</strong> We are so excited to welcome you to the Texas Our Little Miss family, and we can’t wait to see you in <strong>College Station, Texas, October 30–November 1!</strong></p>
+      <p>Now that you are officially registered, here are your next steps to help you prepare for an amazing state experience:</p>
+      <h2 style="font-size:20px;color:#70264f;margin:28px 0 10px">💕 Complete Your BIG!! Forms</h2>
+      <p>Below is the link to your final Texas State forms. Please take some time to carefully review and complete all required information.</p>
+      <p>Once your forms have been submitted, you will receive an invoice with your payment information.</p>
+      <p style="margin:28px 0"><a href="${safeBigFormUrl}" style="display:inline-block;background:#70264f;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:8px">Texas State BIG Forms</a></p>
+      <p style="font-size:14px;color:#654b5b">If the button does not open, use this link:<br><a href="${safeBigFormUrl}">${safeBigFormUrl}</a></p>
+      <h2 style="font-size:20px;color:#70264f;margin:28px 0 10px">📱 Join Our Texas State Facebook Group</h2>
+      <p>Be sure to join our <strong>Texas Our Little Miss State Facebook Group!</strong> This group is one of our most important resources for preparing for state. We’ll share TONS of important announcements, updates, reminders, helpful information, and tips throughout the state season.</p>
+      <p>All important state announcements will be posted in the group, so be sure to join and stay connected!</p>
+      <p>Please also make sure your Local Director is your friend on Facebook so they can add you to the state group.</p>
+      <h2 style="font-size:20px;color:#70264f;margin:28px 0 10px">📖 Read Your State Handbook</h2>
+      <p>Your <strong>Texas State Handbook</strong> is your GO-TO guide for everything you need to know about the state competition!</p>
+      <p>Please take the time to read through it carefully and keep it handy throughout your state journey.</p>
+      <p><strong>Read it! Learn it! Love it! Re-read it again! ❤️</strong></p>
+      <p>Many of the questions you may have about the state competition can be answered right there in your handbook.</p>
+      <p>We are <strong>SO excited</strong> to have you joining us! We can’t wait to watch your family experience all the fun, friendships, memories, and excitement that come with being part of the Texas Our Little Miss family.</p>
+      <p>Thank you for choosing Texas Our Little Miss. We are looking forward to an incredible state weekend together!</p>
+      <p><strong>I can’t wait to see you soon in College Station! 👑✨</strong></p>
+      <p>With excitement,</p>
+      <p><strong>Angela</strong><br>Texas Our Little Miss</p>
+      <p>Angela Kyle and Julie Nice<br>Texas State Directors<br>4125 Brazewell Rd<br>Cleveland, Texas&nbsp; 77328<br>(936) 443-6565 (Angela Kyle)<br>(512) 525-5582 (Julie Nice)</p>
+      <p><strong><em>“If You Can Be Anything In The World, BE KIND”</em></strong></p>
+    </div>`,
   };
 }
 

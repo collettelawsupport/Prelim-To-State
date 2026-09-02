@@ -132,10 +132,12 @@ test('creates distinct invoices and applies Honor Roll discounts only to Honor R
   assert.match(honorLines[2].Description, /Honor Roll 50%/);
 });
 
-test('uses workflow-specific wording in the paid invitation', () => {
+test('keeps the paid invitation generic while preserving each private Big Form link', () => {
   const prelimMessage = buildBigFormInvitationEmail(registration('prelim', 'queen_king'), 'https://forms.example.com/prelim');
   const honorMessage = buildBigFormInvitationEmail(registration('honor_roll', 'honor_roll'), 'https://forms.example.com/honor');
 
-  assert.doesNotMatch(prelimMessage.text, /Honor Roll|50%-off/);
-  assert.match(honorMessage.text, /50%-off eligible Honor Roll optionals/);
+  assert.match(prelimMessage.text, /Texas State BIG Forms:\nhttps:\/\/forms\.example\.com\/prelim/);
+  assert.match(honorMessage.text, /Texas State BIG Forms:\nhttps:\/\/forms\.example\.com\/honor/);
+  assert.doesNotMatch(prelimMessage.text, /Honor Roll|50%-off|\$100|\$150/);
+  assert.doesNotMatch(honorMessage.text, /Honor Roll|50%-off|\$100|\$150/);
 });

@@ -173,15 +173,19 @@ test('normalizes the Big Form host and explicitly selects the Prelim workflow', 
   assert.throws(() => buildBigFormUrl(record, 'javascript:alert(1)'), /must use HTTP or HTTPS/i);
 });
 
-test('puts a prominent Prelim Big Form link in HTML and plain-text invitations', () => {
+test('puts the personalized Texas State BIG Forms link in the full invitation email', () => {
   const bigFormUrl = buildBigFormUrl(record, 'https://bigforms.texasourlittlemiss.net');
   const message = buildBigFormInvitationEmail(record, bigFormUrl);
   assert.match(message.subject, /complete Taylor Sample's Big Form/i);
-  assert.match(message.html, />Complete the Big Form<\/a>/);
+  assert.match(message.html, />Texas State BIG Forms<\/a>/);
+  assert.match(message.html, /Dear Texas Our Little Miss Family/);
+  assert.match(message.html, /Join Our Texas State Facebook Group/);
+  assert.match(message.html, /Read Your State Handbook/);
   assert.match(message.html, /registration=11111111-1111-4111-8111-111111111111/);
   assert.match(message.html, /workflow=prelim/);
-  assert.match(message.text, /Complete the contestant Big Form here:/);
+  assert.match(message.text, /Texas State BIG Forms:/);
   assert.ok(message.text.includes(bigFormUrl));
+  assert.doesNotMatch(JSON.stringify(message), /docs\.google\.com\/forms/i);
   assert.doesNotMatch(message.text, /50%|Honor Roll|Winner's Circle/i);
 });
 
