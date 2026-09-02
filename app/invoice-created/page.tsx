@@ -6,6 +6,7 @@ import Link from 'next/link';
 export default function InvoiceCreatedPage() {
   const [invoiceUrl, setInvoiceUrl] = useState('');
   const [paid, setPaid] = useState(false);
+  const [waiverApplied, setWaiverApplied] = useState(false);
   const [registrationHome, setRegistrationHome] = useState('/');
   const [message, setMessage] = useState('Your QuickBooks deposit invoice has been created and emailed. Your registration is pending until the required deposit is paid.');
 
@@ -17,10 +18,13 @@ export default function InvoiceCreatedPage() {
     fetch(`/api/registration-status?id=${encodeURIComponent(registrationId)}&token=${encodeURIComponent(token)}`)
       .then((response) => response.json())
       .then((result: unknown) => {
-        const status = result as { invoiceUrl?: string; paid?: boolean; workflow?: string };
+        const status = result as { invoiceUrl?: string; paid?: boolean; waiverApplied?: boolean; workflow?: string };
         if (status.invoiceUrl) setInvoiceUrl(status.invoiceUrl);
         if (status.workflow === 'honor_roll') setRegistrationHome('/honor-roll/');
-        if (status.paid) {
+        if (status.waiverApplied) {
+          setWaiverApplied(true);
+          setMessage('Your coupon was approved, no payment is due today, and the $100 registration credit will appear on the updated invoice after the Big Form is completed. Watch your email for the personalized Big Form link.');
+        } else if (status.paid) {
           setPaid(true);
           setMessage('Your deposit is paid and has been applied to the QuickBooks invoice. Watch your email for the Big Form link.');
         }
@@ -33,9 +37,9 @@ export default function InvoiceCreatedPage() {
       <section className="center-card">
         <div className="success-mark" aria-hidden="true">✓</div>
         <p className="eyebrow">Registration received</p>
-        <h1>{paid ? 'Payment received' : 'Complete your deposit'}</h1>
+        <h1>{waiverApplied ? 'Coupon approved' : paid ? 'Payment received' : 'Complete your deposit'}</h1>
         <p>{message}</p>
-        {invoiceUrl && <a className="button-primary link-button" href={invoiceUrl}>{paid ? 'View QuickBooks invoice' : 'Pay QuickBooks invoice'}</a>}
+        {invoiceUrl && !waiverApplied && <a className="button-primary link-button" href={invoiceUrl}>{paid ? 'View QuickBooks invoice' : 'Pay QuickBooks invoice'}</a>}
         <Link className="text-link" href={registrationHome}>Return to registration</Link>
       </section>
     </main>

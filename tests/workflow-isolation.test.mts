@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
+  REGISTRATION_WAIVER_CREDIT_CENTS,
   registrationConfigurationFor,
 } from '../app/registration-data.ts';
 import { buildBigFormInvitationEmail } from '../netlify/lib/email.mts';
@@ -130,6 +131,27 @@ test('creates distinct invoices and applies Honor Roll discounts only to Honor R
   assert.equal(honorLines[2].Amount, 50);
   assert.doesNotMatch(prelimLines[2].Description, /Honor Roll/);
   assert.match(honorLines[2].Description, /Honor Roll 50%/);
+});
+
+test('applies the same private $100 waiver credit without exposing cross-form deposit pricing', () => {
+  const appliedAt = '2026-09-01T12:30:00.000Z';
+  const prelim = { ...registration('prelim', 'queen_king'), waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt } };
+  const honor = { ...registration('honor_roll', 'honor_roll'), waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt } };
+
+  const prelimInitial = buildDepositInvoice(prelim, '7');
+  const honorInitial = buildDepositInvoice(honor, '7');
+  assert.deepEqual(prelimInitial.Line.map((line) => line.Amount), [150, 150]);
+  assert.deepEqual(honorInitial.Line.map((line) => line.Amount), [100, 100]);
+  assert.equal(prelimInitial.AllowOnlinePayment, false);
+  assert.equal(honorInitial.AllowOnlinePayment, false);
+
+  const emptyFees = { lines: [], knownTotal: 0, pendingCount: 0 };
+  const prelimFinal = buildFinalInvoiceLines(prelim, emptyFees, '7', '8');
+  const honorFinal = buildFinalInvoiceLines(honor, emptyFees, '7', '8');
+  assert.equal(prelimFinal.at(-1)?.Amount, 100);
+  assert.equal(honorFinal.at(-1)?.Amount, 100);
+  assert.equal(prelimFinal.at(-1)?.DetailType, 'DiscountLineDetail');
+  assert.equal(honorFinal.at(-1)?.DetailType, 'DiscountLineDetail');
 });
 
 test('keeps the paid invitation generic while preserving each private Big Form link', () => {

@@ -5,6 +5,7 @@ export type RegistrationStatus =
   | 'submitted'
   | 'invoice_error'
   | 'invoice_created'
+  | 'payment_waived'
   | 'paid'
   | 'paperwork_complete'
   | 'invoice_updated';
@@ -26,6 +27,10 @@ export type RegistrationRecord = {
     invoiceId?: string;
     invoiceNumber?: string;
     invoiceUrl?: string;
+  };
+  waiver?: {
+    creditCents: number;
+    appliedAt: string;
   };
   paidAt?: string;
   bigFormInvitationSentAt?: string;

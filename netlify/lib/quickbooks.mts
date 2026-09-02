@@ -531,7 +531,11 @@ export async function updatePaidInvoiceMessage(record: RegistrationRecord, bigFo
       Id: invoiceId,
       SyncToken: syncToken,
       sparse: true,
-      CustomerMemo: { value: `Deposit paid. Complete the contestant Big Form here: ${bigFormUrl}` },
+      CustomerMemo: {
+        value: record.waiver?.appliedAt
+          ? `Initial payment waived. A $${record.waiver.creditCents / 100} registration credit will be applied after the Big Form is completed: ${bigFormUrl}`
+          : `Deposit paid. Complete the contestant Big Form here: ${bigFormUrl}`,
+      },
     }),
   });
   return sendInvoice(invoiceId, record.values.email);
@@ -551,6 +555,9 @@ export async function updateInvoiceFromBigForm(record: RegistrationRecord, fees:
   const pendingNote = fees.pendingCount
     ? ` ${fees.pendingCount} Big Form selection(s) have pending prices and are not included yet.`
     : '';
+  const paymentCreditMemo = record.waiver?.appliedAt
+    ? `A $${record.waiver.creditCents / 100} Texas Our Little Miss registration waiver credit is applied. No initial payment was collected.`
+    : `The $${record.depositCents / 100} deposit remains applied.`;
   const body = {
     Id: invoiceId,
     SyncToken: syncToken,
@@ -560,7 +567,7 @@ export async function updateInvoiceFromBigForm(record: RegistrationRecord, fees:
     TxnDate: typeof current.TxnDate === 'string' ? current.TxnDate : new Date().toISOString().slice(0, 10),
     DueDate: configuration.finalInvoiceDueDate,
     PrivateNote: `OLM registration ${record.id}; Big Form ${record.bigFormSubmissionId || 'received'}`,
-    CustomerMemo: { value: `Your Big Form has been received. The $${record.depositCents / 100} deposit remains applied. ${configuration.finalInvoiceMemo}${pendingNote}` },
+    CustomerMemo: { value: `Your Big Form has been received. ${paymentCreditMemo} ${configuration.finalInvoiceMemo}${pendingNote}` },
     AllowOnlinePayment: true,
     AllowOnlineCreditCardPayment: true,
     AllowOnlineACHPayment: true,

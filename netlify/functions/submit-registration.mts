@@ -1,7 +1,9 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Config } from '@netlify/functions';
+import { REGISTRATION_WAIVER_CREDIT_CENTS } from '../../app/registration-data.ts';
 import { HttpError, errorResponse, json, readJsonBody, safeErrorDetails } from '../lib/http.mts';
 import { publicQuickBooksInvoiceUrl } from '../lib/invoice-url.mts';
+import { sendEligibleRegistrationInvitation } from '../lib/paid-registration.mts';
 import {
   assertRegistrationWorkflowReady,
   createCustomer,
@@ -19,7 +21,12 @@ import {
   saveRegistration,
 } from '../lib/store.mts';
 import type { RegistrationRecord } from '../lib/types.mts';
-import { normalizeRegistrationValues, normalizeRegistrationWorkflow, normalizeSubmissionKey } from '../lib/workflow.mts';
+import {
+  normalizeRegistrationValues,
+  normalizeRegistrationWorkflow,
+  normalizeSubmissionKey,
+  registrationWaiverRequested,
+} from '../lib/workflow.mts';
 
 async function ensureInvoice(record: RegistrationRecord) {
   let activeRecord = record;
@@ -54,13 +61,22 @@ async function ensureInvoice(record: RegistrationRecord) {
     }
   }
   if (!activeRecord.qbo.invoiceId) throw new Error('The QuickBooks invoice ID is missing.');
-  const sent = await sendInvoice(activeRecord.qbo.invoiceId, activeRecord.values.email);
-  activeRecord.qbo.invoiceNumber = sent.invoiceNumber || activeRecord.qbo.invoiceNumber;
-  activeRecord.qbo.invoiceUrl = sent.invoiceUrl || publicQuickBooksInvoiceUrl(activeRecord.qbo.invoiceUrl);
-  activeRecord.status = activeRecord.paidAt ? 'paid' : 'invoice_created';
+  if (!activeRecord.waiver?.appliedAt) {
+    const sent = await sendInvoice(activeRecord.qbo.invoiceId, activeRecord.values.email);
+    activeRecord.qbo.invoiceNumber = sent.invoiceNumber || activeRecord.qbo.invoiceNumber;
+    activeRecord.qbo.invoiceUrl = sent.invoiceUrl || publicQuickBooksInvoiceUrl(activeRecord.qbo.invoiceUrl);
+  }
+  activeRecord.status = activeRecord.waiver?.appliedAt
+    ? 'payment_waived'
+    : activeRecord.paidAt ? 'paid' : 'invoice_created';
   delete activeRecord.lastError;
   await saveRegistration(activeRecord);
-  return activeRecord.qbo.invoiceUrl || registrationFallbackUrl(activeRecord);
+  return {
+    record: activeRecord,
+    nextUrl: activeRecord.waiver?.appliedAt
+      ? registrationFallbackUrl(activeRecord)
+      : activeRecord.qbo.invoiceUrl || registrationFallbackUrl(activeRecord),
+  };
 }
 
 export default async function submitRegistration(request: Request) {
@@ -76,6 +92,7 @@ export default async function submitRegistration(request: Request) {
     }
     const submissionKey = normalizeSubmissionKey('submissionKey' in parsed ? parsed.submissionKey : null);
     const normalized = normalizeRegistrationValues('values' in parsed ? parsed.values : null, workflow);
+    const waiverRequested = registrationWaiverRequested('waiverCode' in parsed ? parsed.waiverCode : null);
     await assertRegistrationWorkflowReady();
     record = await getRegistrationByRequest(workflow, submissionKey);
     if (!record) {
@@ -92,11 +109,40 @@ export default async function submitRegistration(request: Request) {
         values: normalized.values,
         entryFeeCents: normalized.entryFeeCents,
         depositCents: normalized.depositCents,
+        ...(waiverRequested ? {
+          waiver: {
+            creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+            appliedAt: now,
+          },
+        } : {}),
       });
+    } else if (waiverRequested && !record.waiver?.appliedAt) {
+      if (record.qbo?.invoiceId) {
+        throw new HttpError('This registration already has a QuickBooks payment invoice. Please contact registration support to apply a waiver.', 409);
+      }
+      record.waiver = {
+        creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+        appliedAt: new Date().toISOString(),
+      };
+      record.status = 'payment_waived';
+      await saveRegistration(record);
     }
 
-    const checkoutUrl = await ensureInvoice(record);
-    return json('Your required QuickBooks payment is ready.', 201, { registrationId: record.id, checkoutUrl });
+    const ensured = await ensureInvoice(record);
+    record = ensured.record;
+    if (record.waiver?.appliedAt) {
+      await sendEligibleRegistrationInvitation(record);
+      return json('Your registration waiver was applied and the Big Form invitation was emailed.', 201, {
+        registrationId: record.id,
+        checkoutUrl: ensured.nextUrl,
+        waiverApplied: true,
+      });
+    }
+    return json('Your required QuickBooks payment is ready.', 201, {
+      registrationId: record.id,
+      checkoutUrl: ensured.nextUrl,
+      waiverApplied: false,
+    });
   } catch (error) {
     if (error instanceof HttpError) return errorResponse(error, 'The QuickBooks invoice could not be created.');
     if (record) {
@@ -104,7 +150,12 @@ export default async function submitRegistration(request: Request) {
       record.lastError = error instanceof Error ? error.message.slice(0, 1_000) : 'Unknown QuickBooks error';
       await saveRegistration(record).catch(() => undefined);
       console.error('QuickBooks invoice creation failed.', safeErrorDetails(error));
-      return json('Your registration was saved, but the QuickBooks invoice could not be created. Please try again in a moment.', 502);
+      return json(
+        record.waiver?.appliedAt
+          ? 'Your registration was saved, but the waiver workflow could not be completed. Please try again in a moment.'
+          : 'Your registration was saved, but the QuickBooks invoice could not be created. Please try again in a moment.',
+        502,
+      );
     }
     return errorResponse(error, 'The registration could not be saved. Please try again.');
   }

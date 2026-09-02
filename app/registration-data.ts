@@ -2,6 +2,7 @@ export type RegistrationWorkflow = 'prelim' | 'honor_roll';
 
 export const DEPOSIT_CENTS = 15_000;
 export const HONOR_ROLL_DEPOSIT_CENTS = 10_000;
+export const REGISTRATION_WAIVER_CREDIT_CENTS = 10_000;
 export const HONOR_ROLL_OPTIONAL_DISCOUNT = 0.5;
 
 export const ageUnits = ['months', 'years'] as const;

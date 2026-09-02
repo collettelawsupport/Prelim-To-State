@@ -2,6 +2,7 @@
 
 import { FormEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  REGISTRATION_WAIVER_CREDIT_CENTS,
   ageDivisions,
   ageUnits,
   formatCurrency,
@@ -109,6 +110,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
   const [currentStep, setCurrentStep] = useState(0);
   const [values, setValues] = useState<RegistrationValues>({ signature_kind: 'typed' });
   const [submissionKey, setSubmissionKey] = useState('');
+  const [waiverCode, setWaiverCode] = useState('');
   const [draftReady, setDraftReady] = useState(false);
   const [saveStatus, setSaveStatus] = useState('Draft ready');
   const [submissionStatus, setSubmissionStatus] = useState<'idle' | 'submitting'>('idle');
@@ -193,6 +195,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
   const current = registrationSteps[currentStep];
   const percent = Math.round(((currentStep + 1) / registrationSteps.length) * 100);
   const signatureKind = (values.signature_kind || 'typed') as SignatureKind;
+  const waiverCodeEntered = Boolean(waiverCode.trim());
 
   const setValue = (name: string, value: string) => {
     setValues((currentValues) => ({ ...currentValues, [name]: value }));
@@ -252,6 +255,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
           workflow,
           values,
           submissionKey,
+          waiverCode,
           botField: String(formData.get('bot-field') || ''),
         }),
       });
@@ -286,7 +290,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
           <span className="brand-mark" aria-hidden="true">OLM</span>
           <span>Texas Our Little Miss</span>
         </a>
-        <span className="secure-note">Secure registration · Payment required</span>
+        <span className="secure-note">Secure registration · Payment or approved coupon</span>
       </header>
 
       <section className="hero" id="top">
@@ -389,7 +393,9 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
             <div className="section-heading">
               <p>Step 3 of 3</p>
               <h2 id="step-2-title">Release and required payment</h2>
-              <span>Review the release, sign electronically, and continue directly to the secure {formatCurrency(configuration.depositCents)} payment screen from QuickBooks.</span>
+              <span>{waiverCodeEntered
+                ? `Review the release, sign electronically, and submit the approved waiver code for a ${formatCurrency(REGISTRATION_WAIVER_CREDIT_CENTS)} registration credit.`
+                : `Review the release, sign electronically, and continue directly to the secure ${formatCurrency(configuration.depositCents)} payment screen from QuickBooks.`}</span>
             </div>
             <article className="info-panel release-panel">
               <h3>Release information</h3>
@@ -411,10 +417,29 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
               <input type="checkbox" required={currentStep === 2} checked={values.release_accepted === 'yes'} onChange={(event) => setValue('release_accepted', event.target.checked ? 'yes' : '')} />
               <span>I am the contestant&apos;s parent or legal guardian (or the contestant is of legal age), and I agree to the release above. <RequiredMark /></span>
             </label>
+            <label className="field signature-name">
+              <span>Coupon / registration waiver code (optional)</span>
+              <input
+                type="password"
+                autoComplete="off"
+                value={waiverCode}
+                onChange={(event) => {
+                  setWaiverCode(event.target.value);
+                  setSubmissionError('');
+                }}
+              />
+              <small>If Texas Our Little Miss gave you a waiver code, enter it here. A valid code means no payment is due today, applies a {formatCurrency(REGISTRATION_WAIVER_CREDIT_CENTS)} credit to the updated registration invoice, and sends the Big Form immediately.</small>
+            </label>
             <aside className="invoice-summary" aria-label="Required payment summary">
-              <p>Required QuickBooks payment</p>
-              <div><span>Deposit due now</span><strong>{formatCurrency(configuration.depositCents)}</strong></div>
-              <small>Selecting Continue creates and emails the QuickBooks invoice, then opens its secure payment screen. The registration remains pending and the contestant&apos;s place is not secured until the deposit is paid. QuickBooks applies the payment to this invoice automatically. {configuration.afterBigFormCopy}</small>
+              <p>{waiverCodeEntered ? 'Coupon code review' : 'Required QuickBooks payment'}</p>
+              <div>
+                <span>{waiverCodeEntered ? 'Due today with a valid code' : 'Deposit due now'}</span>
+                <strong>{formatCurrency(waiverCodeEntered ? 0 : configuration.depositCents)}</strong>
+              </div>
+              {waiverCodeEntered && <div><span>Credit on updated invoice</span><strong>{formatCurrency(REGISTRATION_WAIVER_CREDIT_CENTS)}</strong></div>}
+              <small>{waiverCodeEntered
+                ? 'Selecting Submit verifies the code securely. If it is valid, no payment screen opens and the personalized Big Form link is emailed immediately. The code is not saved with the contestant registration.'
+                : `Selecting Continue creates and emails the QuickBooks invoice, then opens its secure payment screen. The registration remains pending and the contestant's place is not secured until the deposit is paid. QuickBooks applies the payment to this invoice automatically. ${configuration.afterBigFormCopy}`}</small>
             </aside>
           </section>
 
@@ -432,12 +457,14 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
               ) : (
                 <button className="button-primary" type="submit" disabled={submissionStatus === 'submitting' || workflowAvailability !== 'ready'}>
                   {submissionStatus === 'submitting'
-                    ? 'Opening secure payment…'
+                    ? waiverCodeEntered ? 'Applying coupon…' : 'Opening secure payment…'
                     : workflowAvailability === 'checking'
                       ? 'Checking payment connection…'
                       : workflowAvailability === 'unavailable'
                         ? 'Online registration temporarily paused'
-                        : `Continue to secure ${formatCurrency(configuration.depositCents)} payment`}
+                        : waiverCodeEntered
+                          ? 'Submit registration with coupon code'
+                          : `Continue to secure ${formatCurrency(configuration.depositCents)} payment`}
                 </button>
               )}
             </div>

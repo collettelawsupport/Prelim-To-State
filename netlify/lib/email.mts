@@ -23,7 +23,9 @@ export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormU
   const safeBigFormUrl = escapeHtml(bigFormUrl);
 
   return {
-    subject: `Deposit received - complete ${contestant}'s Big Form`,
+    subject: record.waiver?.appliedAt
+      ? `Registration received - complete ${contestant}'s Big Form`
+      : `Deposit received - complete ${contestant}'s Big Form`,
     text: [
       'Dear Texas Our Little Miss Family,',
       '',

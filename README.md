@@ -10,12 +10,12 @@ There is no contestant-facing workflow selector, comparison page, or cross-link 
 ## Shared workflow
 
 1. The contestant completes the appropriate isolated registration form, accepts its release, and signs it.
-2. The app stores the workflow with the registration, finds or creates the QuickBooks customer, creates the correct deposit invoice, and emails it.
-3. The registration remains pending until QuickBooks reports that the complete workflow-specific deposit is paid.
+2. The app stores the workflow with the registration, finds or creates the QuickBooks customer, creates the correct deposit invoice, and emails it. A valid server-verified waiver code instead records no payment due today and a fixed $100 registration credit.
+3. The registration remains pending until QuickBooks reports that the complete workflow-specific deposit is paid, unless an approved waiver satisfies the initial payment requirement immediately.
 4. Signed Intuit `Payment` and `Invoice` webhooks trigger payment checks. A five-minute scheduled reconciliation recovers delayed or missed events.
-5. The paid invitation opens the Big Form with `workflow=prelim` or `workflow=honor_roll`.
+5. The paid or approved-waiver invitation opens the Big Form with `workflow=prelim` or `workflow=honor_roll`.
 6. The Big Form callback is routed back to this shared service and validated with the shared callback secret, contestant workflow token, and expected classification.
-7. QuickBooks updates the original invoice with the full entry fee and known Big Form charges. Honor Roll discounts apply only to eligible Honor Roll optionals; Prelim optionals remain full price. The paid deposit remains applied.
+7. QuickBooks updates the original invoice with the full entry fee and known Big Form charges. Honor Roll discounts apply only to eligible Honor Roll optionals; Prelim optionals remain full price. The paid deposit remains applied, or an approved waiver adds the fixed $100 registration discount.
 
 The workflows use distinct QuickBooks document prefixes (`OLM-P-` and `OLM-H-`) while sharing one QuickBooks authorization, webhook, item catalog, email configuration, and Netlify Blobs store.
 
@@ -44,6 +44,7 @@ Deploy `collettelawsupport/Prelim-To-State` as the single State Registration pro
 ```text
 NEXT_PUBLIC_SITE_URL=https://registration.texasourlittlemiss.net
 REGISTRATION_ENABLED=false
+REGISTRATION_WAIVER_CODE=
 
 QBO_CLIENT_ID=
 QBO_CLIENT_SECRET=
@@ -64,6 +65,8 @@ RESEND_API_KEY=
 ```
 
 Netlify does not read a repository `.env` during cloud builds; import the values into the project environment. Keep real `.env` files, tokens, client secrets, Gmail app passwords, setup keys, verifier tokens, and callback secrets out of GitHub.
+
+`REGISTRATION_WAIVER_CODE` is optional and must be treated as a secret. When configured, the same code works on both isolated registration forms. A valid code skips payment today, sends the Big Form immediately, and adds a fixed $100 discount to the updated QuickBooks invoice. The submitted code is verified only on the server and is never stored in the registration record. Use a long, hard-to-guess code and rotate it in Netlify whenever needed.
 
 Production registrations and OAuth tokens use the `olm-state-registration-production` Netlify Blobs store. Sandbox uses `olm-state-registration`, so sandbox records cannot be processed against the live company.
 
@@ -106,7 +109,7 @@ The private invitation link still contains the correct workflow. The Big Form co
 
 `GET /api/registration-readiness` verifies that registration is enabled, required settings exist, QuickBooks is connected, the refresh token is usable, and both required item SKUs resolve. The public submit buttons remain disabled while readiness fails.
 
-Accounting calls refresh access tokens and retry once after a 401. Duplicate submissions, invoices, webhook events, paid invitations, and successful Big Form callbacks are handled idempotently. Logs include sanitized operational context without credentials, tokens, request bodies, email query values, or contestant data.
+Accounting calls refresh access tokens and retry once after a 401. Duplicate submissions, invoices, webhook events, payment/waiver invitations, and successful Big Form callbacks are handled idempotently. Logs include sanitized operational context without credentials, tokens, waiver codes, request bodies, email query values, or contestant data.
 
 ## Verification
 

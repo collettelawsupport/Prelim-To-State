@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
-import { DEPOSIT_CENTS, entryLevels } from '../app/registration-data.ts';
+import { DEPOSIT_CENTS, REGISTRATION_WAIVER_CREDIT_CENTS, entryLevels } from '../app/registration-data.ts';
 import { revokeQuickBooksConnection } from '../netlify/functions/quickbooks-disconnect.mts';
 import { config as reconciliationConfig } from '../netlify/functions/reconcile-qbo-payments.mts';
 import { buildBigFormInvitationEmail, configuredInvitationEmailProvider } from '../netlify/lib/email.mts';
@@ -30,6 +30,7 @@ import {
   classificationForEntryLevel,
   normalizeBigFormFees,
   normalizeRegistrationValues,
+  registrationWaiverRequested,
   verifyWebhookSignature,
 } from '../netlify/lib/workflow.mts';
 
@@ -139,6 +140,47 @@ test('builds the published $150 deposit-only QuickBooks invoice', () => {
   assert.match(invoice.CustomerMemo.value, /due on or before October 8, 2026/);
 });
 
+test('verifies the server-only waiver code without storing or returning it', () => {
+  const environment = { REGISTRATION_WAIVER_CODE: 'TXOLM-APPROVED-2026' };
+  assert.equal(registrationWaiverRequested('', environment), false);
+  assert.equal(registrationWaiverRequested('  txolm-approved-2026  ', environment), true);
+  assert.throws(
+    () => registrationWaiverRequested('wrong-code', environment),
+    /waiver code is not valid/i,
+  );
+  assert.throws(
+    () => registrationWaiverRequested('TXOLM-APPROVED-2026', {}),
+    /waiver code is not valid/i,
+  );
+});
+
+test('waives payment today and carries exactly a $100 credit to the updated invoice', () => {
+  const waivedRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    status: 'payment_waived',
+    waiver: {
+      creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+      appliedAt: '2026-09-01T12:30:00.000Z',
+    },
+  };
+  const initialInvoice = buildDepositInvoice(waivedRecord, '7');
+  assert.deepEqual(initialInvoice.Line.map((line) => line.Amount), [150, 150]);
+  assert.equal(initialInvoice.Line[1].DetailType, 'DiscountLineDetail');
+  assert.equal(initialInvoice.AllowOnlinePayment, false);
+  assert.match(initialInvoice.CustomerMemo.value, /No payment is due today/i);
+  assert.match(initialInvoice.CustomerMemo.value, /\$100\.00 registration credit/i);
+
+  const finalLines = buildFinalInvoiceLines(waivedRecord, { lines: [], knownTotal: 0, pendingCount: 0 }, '7', '8');
+  assert.deepEqual(finalLines.map((line) => line.Amount), [370, 0, 100]);
+  assert.equal(finalLines[2].DetailType, 'DiscountLineDetail');
+  assert.match(String(finalLines[2].Description), /registration waiver credit/i);
+  assert.doesNotMatch(String(finalLines[1].Description), /previously paid/i);
+
+  const invitation = buildBigFormInvitationEmail(waivedRecord, 'https://bigforms.example/waived');
+  assert.match(invitation.subject, /^Registration received/i);
+  assert.doesNotMatch(invitation.subject, /^Deposit received/i);
+});
+
 test('replaces the deposit line with the full entry fee and never applies Honor Roll discounts', () => {
   const fees = normalizeBigFormFees({
     lines: [
@@ -243,6 +285,36 @@ test('paid-invoice reconciliation sends one invitation and is idempotent on dupl
   assert.equal(mutableRecord.bigFormInvitationMethod, 'gmail');
   assert.equal(mutableRecord.bigFormInvitationSentAt, '2026-09-01T13:00:00.000Z');
   assert.equal(saveCount, 2);
+});
+
+test('approved waiver sends the Big Form without checking for a QuickBooks payment', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    status: 'payment_waived',
+    waiver: {
+      creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+      appliedAt: '2026-09-01T12:30:00.000Z',
+    },
+  };
+  let invitationCount = 0;
+  assert.equal(await reconcilePaidInvoice('99', 'scheduled', {
+    getRegistrationByInvoice: async () => mutableRecord,
+    getInvoice: async () => assert.fail('A waived registration must not wait for invoice payment.'),
+    saveRegistration: async (updated: RegistrationRecord) => updated,
+    sendBigFormInvitation: async () => {
+      invitationCount += 1;
+      return 'gmail' as const;
+    },
+    updatePaidInvoiceMessage: async () => assert.fail('Gmail delivery must not use the QuickBooks fallback.'),
+    claimBigFormInvitation: async () => true,
+    releaseBigFormInvitationClaim: async () => undefined,
+    bigFormUrl: 'https://bigforms.example',
+    now: () => '2026-09-01T13:00:00.000Z',
+  }), 'sent');
+  assert.equal(invitationCount, 1);
+  assert.equal(mutableRecord.paidAt, undefined);
+  assert.equal(mutableRecord.status, 'payment_waived');
+  assert.equal(mutableRecord.bigFormInvitationSentAt, '2026-09-01T13:00:00.000Z');
 });
 
 test('missing or delayed payment state remains retryable and sends after QuickBooks settles', async () => {

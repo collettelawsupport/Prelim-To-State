@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { publicQuickBooksInvoiceUrl } from './invoice-url.mts';
 import {
   HONOR_ROLL_OPTIONAL_DISCOUNT,
+  REGISTRATION_WAIVER_CREDIT_CENTS,
   ageDivisions,
   ageUnits,
   entryLevelFor,
@@ -139,12 +140,30 @@ function descriptionLine(description: string) {
   };
 }
 
+function discountLine(amount: number, description: string) {
+  return {
+    Amount: Math.round(amount * 100) / 100,
+    Description: description.slice(0, 4_000),
+    DetailType: 'DiscountLineDetail',
+    DiscountLineDetail: {
+      PercentBased: false,
+    },
+  };
+}
+
+type QuickBooksInvoiceLine =
+  | ReturnType<typeof salesLine>
+  | ReturnType<typeof descriptionLine>
+  | ReturnType<typeof discountLine>;
+
 export function buildDepositInvoice(record: RegistrationRecord, registrationItemId: string) {
   const configuration = registrationConfigurationFor(record.workflow);
   const name = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
   const deposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
   const remainingBalanceCents = Math.max(0, record.entryFeeCents - record.depositCents);
   const remainingBalance = (remainingBalanceCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const waiverCredit = ((record.waiver?.creditCents || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const waiverApplied = Boolean(record.waiver?.appliedAt);
   return {
     CustomerRef: { value: record.qbo?.customerId },
     BillEmail: { Address: record.values.email },
@@ -152,12 +171,19 @@ export function buildDepositInvoice(record: RegistrationRecord, registrationItem
     DueDate: new Date().toISOString().slice(0, 10),
     PrivateNote: `OLM registration ${record.id}`,
     CustomerMemo: {
-      value: `Deposit due now: ${deposit}. Remaining entry fee balance after deposit: ${remainingBalance}, still due on or before ${configuration.depositDueLabel}. The deposit will be applied to the selected state competition entry fee.`,
+      value: waiverApplied
+        ? `Texas Our Little Miss approved an initial-payment waiver. No payment is due today. A ${waiverCredit} registration credit will be applied to the updated invoice after the Big Form is completed.`
+        : `Deposit due now: ${deposit}. Remaining entry fee balance after deposit: ${remainingBalance}, still due on or before ${configuration.depositDueLabel}. The deposit will be applied to the selected state competition entry fee.`,
     },
-    AllowOnlinePayment: true,
-    AllowOnlineCreditCardPayment: true,
-    AllowOnlineACHPayment: true,
-    Line: [salesLine(record.depositCents / 100, `2026 Texas Our Little Miss registration deposit due now - ${name}`, registrationItemId)],
+    AllowOnlinePayment: !waiverApplied,
+    AllowOnlineCreditCardPayment: !waiverApplied,
+    AllowOnlineACHPayment: !waiverApplied,
+    Line: waiverApplied
+      ? [
+          salesLine(record.depositCents / 100, `2026 Texas Our Little Miss registration deposit - ${name}`, registrationItemId),
+          discountLine(record.depositCents / 100, 'Initial deposit payment waived by Texas Our Little Miss — no payment due today.'),
+        ]
+      : [salesLine(record.depositCents / 100, `2026 Texas Our Little Miss registration deposit due now - ${name}`, registrationItemId)],
   };
 }
 
@@ -179,9 +205,11 @@ export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigForm
   if (!entry) throw new Error('The registration entry level is no longer valid.');
   const entryDescription = `2026 state competition entry fee — ${entry.label}`;
   const paidDeposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-  const lines = [
+  const lines: QuickBooksInvoiceLine[] = [
     salesLine(entry.feeCents / 100, entryDescription, registrationItemId),
-    descriptionLine(`Registration deposit previously paid — ${paidDeposit} credit remains applied in QuickBooks.`),
+    record.waiver?.appliedAt
+      ? descriptionLine('Initial payment waived by Texas Our Little Miss. The approved registration credit is shown below.')
+      : descriptionLine(`Registration deposit previously paid — ${paidDeposit} credit remains applied in QuickBooks.`),
   ];
 
   for (const fee of fees.lines) {
@@ -197,6 +225,10 @@ export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigForm
       ? `${fee.description || fee.item} — Honor Roll 50% optional price`
       : fee.description || fee.item;
     lines.push(salesLine(amount, description, optionalItemId, quantity, unitPrice));
+  }
+  if (record.waiver?.appliedAt) {
+    const creditCents = Math.min(record.waiver.creditCents, REGISTRATION_WAIVER_CREDIT_CENTS);
+    lines.push(discountLine(creditCents / 100, 'Texas Our Little Miss registration waiver credit'));
   }
   return lines;
 }
@@ -222,6 +254,21 @@ export function secureEqual(left: string, right: string) {
   return timingSafeEqual(leftHash, rightHash);
 }
 
+export function registrationWaiverRequested(
+  value: unknown,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) {
+  if (value === undefined || value === null || value === '') return false;
+  if (typeof value !== 'string' || value.length > 200) throw new HttpError('The registration waiver code is not valid.');
+  const supplied = value.trim().toUpperCase();
+  if (!supplied) return false;
+  const configured = environment.REGISTRATION_WAIVER_CODE?.trim().toUpperCase() || '';
+  if (!configured || !secureEqual(supplied, configured)) {
+    throw new HttpError('The registration waiver code is not valid. Please check the code or leave the field blank.');
+  }
+  return true;
+}
+
 export function verifyWebhookSignature(rawBody: string, signature: string, verifierToken: string) {
   if (!signature || !verifierToken) return false;
   const expected = createHmac('sha256', verifierToken).update(rawBody, 'utf8').digest('base64');
@@ -232,6 +279,8 @@ export function publicStatus(record: RegistrationRecord) {
   return {
     workflow: record.workflow,
     paid: Boolean(record.paidAt),
+    paymentSatisfied: Boolean(record.paidAt || record.waiver?.appliedAt),
+    waiverApplied: Boolean(record.waiver?.appliedAt),
     paperworkComplete: Boolean(record.bigFormSubmissionId),
     invoiceUpdated: Boolean(record.invoiceUpdatedAt),
     invoiceUrl: publicQuickBooksInvoiceUrl(record.qbo?.invoiceUrl),

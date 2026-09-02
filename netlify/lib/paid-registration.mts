@@ -34,11 +34,13 @@ const defaultDependencies: PaidRegistrationDependencies = {
   now: () => new Date().toISOString(),
 };
 
-async function sendPaidInvitation(record: RegistrationRecord, dependencies: PaidRegistrationDependencies) {
-  if (!record.paidAt) {
-    record.paidAt = dependencies.now();
-    record.status = 'paid';
-    await dependencies.saveRegistration(record);
+export async function sendEligibleRegistrationInvitation(
+  record: RegistrationRecord,
+  dependencyOverrides: Partial<PaidRegistrationDependencies> = {},
+) {
+  const dependencies = { ...defaultDependencies, ...dependencyOverrides };
+  if (!record.paidAt && !record.waiver?.appliedAt) {
+    throw new Error('The registration payment requirement has not been satisfied.');
   }
   if (record.bigFormInvitationSentAt) return false;
 
@@ -65,6 +67,15 @@ async function sendPaidInvitation(record: RegistrationRecord, dependencies: Paid
   }
 }
 
+async function sendPaidInvitation(record: RegistrationRecord, dependencies: PaidRegistrationDependencies) {
+  if (!record.paidAt) {
+    record.paidAt = dependencies.now();
+    record.status = 'paid';
+    await dependencies.saveRegistration(record);
+  }
+  return sendEligibleRegistrationInvitation(record, dependencies);
+}
+
 export async function reconcilePaidInvoice(
   invoiceId: string,
   source: 'scheduled' | 'webhook',
@@ -74,6 +85,13 @@ export async function reconcilePaidInvoice(
   const record = await dependencies.getRegistrationByInvoice(invoiceId);
   if (!record) return 'missing_registration';
   if (record.bigFormInvitationSentAt) return 'already_sent';
+
+  if (record.waiver?.appliedAt) {
+    const sent = await sendEligibleRegistrationInvitation(record, dependencies);
+    if (!sent) return 'already_sent';
+    console.info('QuickBooks waived-registration invitation completed.', { invoiceId, source });
+    return 'sent';
+  }
 
   const invoice = await dependencies.getInvoice(invoiceId);
   const total = Number(invoice.TotalAmt || 0);
