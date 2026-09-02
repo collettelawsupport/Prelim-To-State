@@ -5,6 +5,8 @@ import { DEPOSIT_CENTS, REGISTRATION_WAIVER_CREDIT_CENTS, entryLevels } from '..
 import { revokeQuickBooksConnection } from '../netlify/functions/quickbooks-disconnect.mts';
 import { config as reconciliationConfig } from '../netlify/functions/reconcile-qbo-payments.mts';
 import {
+  BIG_FORM_INVITATION_CC,
+  bigFormInvitationRecipients,
   buildBigFormInvitationEmail,
   configuredInvitationEmailProvider,
   invitationIdempotencyKey,
@@ -257,6 +259,21 @@ test('prefers Gmail, keeps Resend optional, and does not expose credentials in g
   assert.equal(configuredInvitationEmailProvider({}), null);
   const message = buildBigFormInvitationEmail(record, buildBigFormUrl(record, 'https://bigforms.example'));
   assert.doesNotMatch(JSON.stringify(message), /dummy-app-password|re_dummy/);
+});
+
+test('copies Texas OLM on every contestant Big Form invitation', () => {
+  assert.deepEqual(bigFormInvitationRecipients(record), {
+    to: [values.email],
+    cc: [BIG_FORM_INVITATION_CC],
+  });
+  assert.deepEqual(bigFormInvitationRecipients({
+    ...record,
+    values: { ...record.values, email: 'TexasOLM2@gmail.com' },
+  }), {
+    to: ['TexasOLM2@gmail.com'],
+    cc: [],
+  });
+  assert.equal(BIG_FORM_INVITATION_CC, 'texasolm2@gmail.com');
 });
 
 test('uses a fresh provider idempotency key for each requested resend', () => {

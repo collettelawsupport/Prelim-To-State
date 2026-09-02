@@ -3,6 +3,15 @@ import type { RegistrationRecord } from './types.mts';
 
 export type InvitationEmailProvider = 'gmail' | 'resend';
 type EmailLogger = Pick<Console, 'info' | 'error'>;
+export const BIG_FORM_INVITATION_CC = 'texasolm2@gmail.com';
+
+export function bigFormInvitationRecipients(record: RegistrationRecord) {
+  const to = record.values.email.trim();
+  return {
+    to: [to],
+    cc: to.toLowerCase() === BIG_FORM_INVITATION_CC ? [] : [BIG_FORM_INVITATION_CC],
+  };
+}
 
 export function invitationIdempotencyKey(record: RegistrationRecord) {
   const attempt = Math.max(0, Math.trunc(record.bigFormInvitationAttempt || 0));
@@ -125,6 +134,7 @@ export async function sendBigFormInvitation(
   if (!provider) return null;
 
   const message = buildBigFormInvitationEmail(record, bigFormUrl);
+  const recipients = bigFormInvitationRecipients(record);
   if (provider === 'gmail') {
     const user = process.env.GMAIL_USER!.trim();
     const appPassword = process.env.GMAIL_APP_PASSWORD!.replace(/\s/g, '');
@@ -139,7 +149,8 @@ export async function sendBigFormInvitation(
     try {
       await transport.sendMail({
         from,
-        to: record.values.email,
+        to: recipients.to,
+        ...(recipients.cc.length ? { cc: recipients.cc } : {}),
         replyTo: user,
         ...message,
       });
@@ -169,7 +180,8 @@ export async function sendBigFormInvitation(
     },
     body: JSON.stringify({
       from,
-      to: [record.values.email],
+      to: recipients.to,
+      ...(recipients.cc.length ? { cc: recipients.cc } : {}),
       ...message,
     }),
   });

@@ -1,5 +1,5 @@
 import type { Config } from '@netlify/functions';
-import { configuredInvitationEmailProvider } from '../lib/email.mts';
+import { BIG_FORM_INVITATION_CC, configuredInvitationEmailProvider } from '../lib/email.mts';
 import { errorResponse, json } from '../lib/http.mts';
 import { assertRegistrationWorkflowReady, validateQuickBooksItems } from '../lib/quickbooks.mts';
 
@@ -13,6 +13,7 @@ export default async function registrationReadiness(request: Request) {
       workflowReady: true,
       invitationEmailReady: Boolean(emailProvider),
       invitationEmailProvider: emailProvider || '',
+      invitationEmailCc: BIG_FORM_INVITATION_CC,
     });
   } catch (error) {
     return errorResponse(error, 'Online invoice registration is temporarily unavailable.');
