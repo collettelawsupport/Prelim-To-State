@@ -4,6 +4,8 @@
 
 [build.environment]
   NODE_VERSION = "24"
+  # This value is intentionally embedded in the browser bundle by Next.js.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SITE_URL"
 
 [functions]
   directory = "netlify/functions"
