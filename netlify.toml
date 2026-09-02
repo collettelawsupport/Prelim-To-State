@@ -4,8 +4,9 @@
 
 [build.environment]
   NODE_VERSION = "24"
-  # This value is intentionally embedded in the browser bundle by Next.js.
-  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SITE_URL"
+  # These public configuration values intentionally appear in client output,
+  # documentation, or tests and are not credentials.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SITE_URL,QBO_ENVIRONMENT,BIG_FORM_URL"
 
 [functions]
   directory = "netlify/functions"
