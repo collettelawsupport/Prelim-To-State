@@ -68,6 +68,19 @@ export async function releaseBigFormInvitationClaim(registrationId: string) {
   await store().delete(`invitation-claims/${registrationId}.json`);
 }
 
+export async function claimBigFormInvitationResend(registrationId: string) {
+  const result = await store().setJSON(
+    `invitation-resend-claims/${registrationId}.json`,
+    { claimedAt: new Date().toISOString() },
+    { onlyIfNew: true },
+  );
+  return result.modified;
+}
+
+export async function releaseBigFormInvitationResendClaim(registrationId: string) {
+  await store().delete(`invitation-resend-claims/${registrationId}.json`);
+}
+
 export async function claimDepositInvoice(registrationId: string) {
   const result = await store().setJSON(
     `invoice-claims/${registrationId}.json`,
@@ -92,7 +105,10 @@ export async function listRegistrationInvoicesAwaitingInvitation(limit = 25) {
     const key = keys[(start + offset) % keys.length];
     const invoiceId = key.slice('invoices/'.length).replace(/\.json$/, '');
     const record = await getRegistrationByInvoice(invoiceId);
-    if (record?.qbo?.invoiceId && !record.bigFormInvitationSentAt) result.push(invoiceId);
+    if (
+      record?.qbo?.invoiceId
+      && (!record.bigFormInvitationSentAt || record.bigFormInvitationMethod === 'quickbooks')
+    ) result.push(invoiceId);
   }
   return result;
 }

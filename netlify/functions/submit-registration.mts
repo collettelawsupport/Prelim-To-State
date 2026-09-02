@@ -131,11 +131,22 @@ export default async function submitRegistration(request: Request) {
     const ensured = await ensureInvoice(record);
     record = ensured.record;
     if (record.waiver?.appliedAt) {
-      await sendEligibleRegistrationInvitation(record);
-      return json('Your registration waiver was applied and the Big Form invitation was emailed.', 201, {
+      let invitationSent = Boolean(
+        record.bigFormInvitationSentAt
+        && (record.bigFormInvitationMethod === 'gmail' || record.bigFormInvitationMethod === 'resend'),
+      );
+      try {
+        invitationSent = await sendEligibleRegistrationInvitation(record) || invitationSent;
+      } catch (error) {
+        record.lastError = error instanceof Error ? error.message.slice(0, 1_000) : 'Unknown invitation delivery error';
+        await saveRegistration(record).catch(() => undefined);
+        console.error('The waived registration was completed, but its Big Form email was not delivered.', safeErrorDetails(error));
+      }
+      return json('Your registration waiver was applied. Your personalized Big Form is ready.', 201, {
         registrationId: record.id,
         checkoutUrl: ensured.nextUrl,
         waiverApplied: true,
+        invitationSent,
       });
     }
     return json('Your required QuickBooks payment is ready.', 201, {

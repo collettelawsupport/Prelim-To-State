@@ -35,6 +35,8 @@ export type RegistrationRecord = {
   paidAt?: string;
   bigFormInvitationSentAt?: string;
   bigFormInvitationMethod?: 'gmail' | 'resend' | 'quickbooks';
+  bigFormInvitationAttempt?: number;
+  bigFormInvitationLastAttemptAt?: string;
   bigFormSubmissionId?: string;
   invoiceUpdatedAt?: string;
   lastError?: string;

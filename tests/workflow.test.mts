@@ -4,9 +4,19 @@ import test from 'node:test';
 import { DEPOSIT_CENTS, REGISTRATION_WAIVER_CREDIT_CENTS, entryLevels } from '../app/registration-data.ts';
 import { revokeQuickBooksConnection } from '../netlify/functions/quickbooks-disconnect.mts';
 import { config as reconciliationConfig } from '../netlify/functions/reconcile-qbo-payments.mts';
-import { buildBigFormInvitationEmail, configuredInvitationEmailProvider } from '../netlify/lib/email.mts';
+import {
+  buildBigFormInvitationEmail,
+  configuredInvitationEmailProvider,
+  invitationIdempotencyKey,
+} from '../netlify/lib/email.mts';
 import { publicQuickBooksInvoiceUrl } from '../netlify/lib/invoice-url.mts';
-import { reconcilePaidInvoice } from '../netlify/lib/paid-registration.mts';
+import {
+  InvitationEmailNotConfiguredError,
+  InvitationResendTooSoonError,
+  reconcilePaidInvoice,
+  resendRegistrationInvitation,
+  sendEligibleRegistrationInvitation,
+} from '../netlify/lib/paid-registration.mts';
 import {
   assertRegistrationWorkflowReady,
   completeQuickBooksAuthorization,
@@ -30,6 +40,7 @@ import {
   classificationForEntryLevel,
   normalizeBigFormFees,
   normalizeRegistrationValues,
+  publicStatus,
   registrationWaiverRequested,
   verifyWebhookSignature,
 } from '../netlify/lib/workflow.mts';
@@ -248,6 +259,115 @@ test('prefers Gmail, keeps Resend optional, and does not expose credentials in g
   assert.doesNotMatch(JSON.stringify(message), /dummy-app-password|re_dummy/);
 });
 
+test('uses a fresh provider idempotency key for each requested resend', () => {
+  assert.equal(invitationIdempotencyKey(record), `big-form-invitation-${record.id}`);
+  assert.equal(
+    invitationIdempotencyKey({ ...record, bigFormInvitationAttempt: 2 }),
+    `big-form-invitation-${record.id}-2`,
+  );
+});
+
+test('exposes the secured Big Form link after payment without treating a QuickBooks memo as email', () => {
+  const waivedRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    bigFormInvitationSentAt: '2026-09-01T12:31:00.000Z',
+    bigFormInvitationMethod: 'quickbooks',
+  };
+  const status = publicStatus(waivedRecord, { BIG_FORM_URL: 'https://bigforms.example' });
+  assert.equal(status.paymentSatisfied, true);
+  assert.equal(status.invitationSent, false);
+  assert.equal(new URL(status.bigFormUrl).searchParams.get('workflow_token'), record.workflowToken);
+  assert.equal(publicStatus(record, { BIG_FORM_URL: 'https://bigforms.example' }).bigFormUrl, '');
+});
+
+test('does not mark an invitation sent when no direct email provider is configured', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+  };
+  let releasedClaims = 0;
+  await assert.rejects(
+    () => sendEligibleRegistrationInvitation(mutableRecord, {
+      saveRegistration: async (updated: RegistrationRecord) => updated,
+      sendBigFormInvitation: async () => null,
+      claimBigFormInvitation: async () => true,
+      releaseBigFormInvitationClaim: async () => { releasedClaims += 1; },
+      bigFormUrl: 'https://bigforms.example',
+      now: () => '2026-09-01T13:00:00.000Z',
+    }),
+    InvitationEmailNotConfiguredError,
+  );
+  assert.equal(mutableRecord.bigFormInvitationSentAt, undefined);
+  assert.equal(mutableRecord.bigFormInvitationMethod, undefined);
+  assert.equal(releasedClaims, 1);
+});
+
+test('retries registrations previously marked sent through the QuickBooks fallback', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    bigFormInvitationSentAt: '2026-09-01T12:31:00.000Z',
+    bigFormInvitationMethod: 'quickbooks',
+  };
+  let releasedClaims = 0;
+  assert.equal(await sendEligibleRegistrationInvitation(mutableRecord, {
+    saveRegistration: async (updated: RegistrationRecord) => updated,
+    sendBigFormInvitation: async () => 'resend' as const,
+    claimBigFormInvitation: async () => true,
+    releaseBigFormInvitationClaim: async () => { releasedClaims += 1; },
+    bigFormUrl: 'https://bigforms.example',
+    now: () => '2026-09-01T13:00:00.000Z',
+  }), true);
+  assert.equal(mutableRecord.bigFormInvitationMethod, 'resend');
+  assert.equal(mutableRecord.bigFormInvitationSentAt, '2026-09-01T13:00:00.000Z');
+  assert.equal(releasedClaims, 2);
+});
+
+test('manual resend delivers to the stored address with a fresh attempt and rate limit', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    bigFormInvitationSentAt: '2026-09-01T12:31:00.000Z',
+    bigFormInvitationMethod: 'resend',
+  };
+  let now = '2026-09-01T13:00:00.000Z';
+  let claims = 0;
+  let releases = 0;
+  let saves = 0;
+  const dependencies = {
+    saveRegistration: async (updated: RegistrationRecord) => {
+      saves += 1;
+      return updated;
+    },
+    sendBigFormInvitation: async (updated: RegistrationRecord, bigFormUrl: string) => {
+      assert.equal(updated.values.email, values.email);
+      assert.match(invitationIdempotencyKey(updated), /-1$/);
+      assert.equal(new URL(bigFormUrl).searchParams.get('registration'), record.id);
+      return 'resend' as const;
+    },
+    claimBigFormInvitationResend: async () => {
+      claims += 1;
+      return true;
+    },
+    releaseBigFormInvitationResendClaim: async () => { releases += 1; },
+    bigFormUrl: 'https://bigforms.example',
+    now: () => now,
+  };
+  assert.equal(await resendRegistrationInvitation(mutableRecord, dependencies), 'resend');
+  assert.equal(mutableRecord.bigFormInvitationAttempt, 1);
+  assert.equal(saves, 2);
+  assert.equal(claims, 1);
+  assert.equal(releases, 1);
+
+  now = '2026-09-01T13:00:30.000Z';
+  await assert.rejects(
+    () => resendRegistrationInvitation(mutableRecord, dependencies),
+    InvitationResendTooSoonError,
+  );
+  assert.equal(claims, 1);
+});
+
 test('verifies Intuit webhook signatures over the untouched raw body', () => {
   const body = '{"eventNotifications":[]}';
   const token = 'webhook-verifier';
@@ -272,7 +392,6 @@ test('paid-invoice reconciliation sends one invitation and is idempotent on dupl
       assert.equal(new URL(url).searchParams.get('workflow'), 'prelim');
       return 'gmail' as const;
     },
-    updatePaidInvoiceMessage: async () => assert.fail('Gmail delivery must not use the QuickBooks fallback.'),
     claimBigFormInvitation: async () => true,
     releaseBigFormInvitationClaim: async () => undefined,
     bigFormUrl: 'bigforms.example',
@@ -305,7 +424,6 @@ test('approved waiver sends the Big Form without checking for a QuickBooks payme
       invitationCount += 1;
       return 'gmail' as const;
     },
-    updatePaidInvoiceMessage: async () => assert.fail('Gmail delivery must not use the QuickBooks fallback.'),
     claimBigFormInvitation: async () => true,
     releaseBigFormInvitationClaim: async () => undefined,
     bigFormUrl: 'https://bigforms.example',
@@ -329,7 +447,6 @@ test('missing or delayed payment state remains retryable and sends after QuickBo
       invitationCount += 1;
       return 'gmail' as const;
     },
-    updatePaidInvoiceMessage: async () => assert.fail('Gmail delivery must not use the QuickBooks fallback.'),
     claimBigFormInvitation: async () => true,
     releaseBigFormInvitationClaim: async () => undefined,
     bigFormUrl: 'https://bigforms.example',
@@ -356,7 +473,6 @@ test('failed invitation delivery releases its claim so scheduled reconciliation 
       if (deliveryAttempts === 1) throw new Error('simulated delivery outage');
       return 'gmail' as const;
     },
-    updatePaidInvoiceMessage: async () => assert.fail('Gmail delivery must not use the QuickBooks fallback.'),
     claimBigFormInvitation: async () => true,
     releaseBigFormInvitationClaim: async () => { releasedClaims += 1; },
     bigFormUrl: 'https://bigforms.example',
@@ -380,7 +496,6 @@ test('an existing invitation claim prevents concurrent duplicate delivery', asyn
       invitationCount += 1;
       return 'gmail' as const;
     },
-    updatePaidInvoiceMessage: async () => assert.fail('The claimed invitation must not be delivered.'),
     claimBigFormInvitation: async () => false,
     releaseBigFormInvitationClaim: async () => undefined,
     bigFormUrl: 'https://bigforms.example',

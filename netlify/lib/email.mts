@@ -4,6 +4,13 @@ import type { RegistrationRecord } from './types.mts';
 export type InvitationEmailProvider = 'gmail' | 'resend';
 type EmailLogger = Pick<Console, 'info' | 'error'>;
 
+export function invitationIdempotencyKey(record: RegistrationRecord) {
+  const attempt = Math.max(0, Math.trunc(record.bigFormInvitationAttempt || 0));
+  return attempt > 0
+    ? `big-form-invitation-${record.id}-${attempt}`
+    : `big-form-invitation-${record.id}`;
+}
+
 export function configuredInvitationEmailProvider(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): InvitationEmailProvider | null {
@@ -158,7 +165,7 @@ export async function sendBigFormInvitation(
     headers: {
       authorization: `Bearer ${apiKey}`,
       'content-type': 'application/json',
-      'idempotency-key': `big-form-invitation-${record.id}`,
+      'idempotency-key': invitationIdempotencyKey(record),
     },
     body: JSON.stringify({
       from,

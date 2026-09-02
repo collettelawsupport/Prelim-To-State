@@ -275,12 +275,31 @@ export function verifyWebhookSignature(rawBody: string, signature: string, verif
   return secureEqual(expected, signature);
 }
 
-export function publicStatus(record: RegistrationRecord) {
+export function publicStatus(
+  record: RegistrationRecord,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+) {
+  const paymentSatisfied = Boolean(record.paidAt || record.waiver?.appliedAt);
+  const directlyEmailed = Boolean(
+    record.bigFormInvitationSentAt
+    && (record.bigFormInvitationMethod === 'gmail' || record.bigFormInvitationMethod === 'resend'),
+  );
+  let bigFormUrl = '';
+  const configuredBigFormUrl = environment.BIG_FORM_URL?.trim();
+  if (paymentSatisfied && configuredBigFormUrl) {
+    try {
+      bigFormUrl = buildBigFormUrl(record, configuredBigFormUrl);
+    } catch {
+      // Readiness checks report invalid configuration; public status stays usable.
+    }
+  }
   return {
     workflow: record.workflow,
     paid: Boolean(record.paidAt),
-    paymentSatisfied: Boolean(record.paidAt || record.waiver?.appliedAt),
+    paymentSatisfied,
     waiverApplied: Boolean(record.waiver?.appliedAt),
+    invitationSent: directlyEmailed,
+    bigFormUrl,
     paperworkComplete: Boolean(record.bigFormSubmissionId),
     invoiceUpdated: Boolean(record.invoiceUpdatedAt),
     invoiceUrl: publicQuickBooksInvoiceUrl(record.qbo?.invoiceUrl),
