@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   REGISTRATION_WAIVER_CREDIT_CENTS,
+  ageDivisions,
   registrationConfigurationFor,
 } from '../app/registration-data.ts';
 import { buildBigFormInvitationEmail } from '../netlify/lib/email.mts';
@@ -79,6 +80,20 @@ test('exposes only the selected workflow pricing in each rendered configuration'
   assert.doesNotMatch(prelim, /\$100|Honor Roll|Winner's Circle/);
   assert.match(honor, /\$100/);
   assert.doesNotMatch(honor, /\$150|standard entry fee is \$660|Won QUEEN\/KING/);
+});
+
+test('uses the official state age divisions without Prince divisions', () => {
+  assert.deepEqual(ageDivisions, [
+    '0 - 2 years',
+    '3 - 6 years',
+    '7 - 9 years',
+    '10 - 12 years',
+    '13 - 15 years',
+    '16 - 20 years',
+    '21 - 39 years',
+    '40 + years',
+  ]);
+  assert.equal(ageDivisions.some((division) => /prince/i.test(division)), false);
 });
 
 test('server validation rejects entry levels submitted through the wrong form', () => {

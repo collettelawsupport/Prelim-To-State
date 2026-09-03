@@ -14,8 +14,8 @@ export const ageDivisions = [
   '10 - 12 years',
   '13 - 15 years',
   '16 - 20 years',
-  '21 - 28 years',
-  '29 + years',
+  '21 - 39 years',
+  '40 + years',
 ] as const;
 
 export const entryLevels = [
