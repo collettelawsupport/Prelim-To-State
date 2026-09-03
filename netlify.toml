@@ -7,6 +7,9 @@
   # These public configuration values intentionally appear in client output,
   # documentation, or tests and are not credentials.
   SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SITE_URL,QBO_ENVIRONMENT,BIG_FORM_URL,QBO_REDIRECT_URI,EMAIL_FROM,GMAIL_USER"
+  # These user-supplied binary assets contain no application credentials. Use
+  # filename substrings so bundled and published copies are omitted as well.
+  SECRETS_SCAN_OMIT_PATHS = "handbook-texas-state-beauty-2026.pdf,texas-olm-candyland-background.jpg"
 
 [functions]
   directory = "netlify/functions"
