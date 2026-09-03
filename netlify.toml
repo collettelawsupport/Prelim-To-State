@@ -12,6 +12,18 @@
   directory = "netlify/functions"
   node_bundler = "esbuild"
 
+[functions."reconcile-qbo-payments"]
+  included_files = ["netlify/assets/handbook-texas-state-beauty-2026.pdf"]
+
+[functions."quickbooks-webhook"]
+  included_files = ["netlify/assets/handbook-texas-state-beauty-2026.pdf"]
+
+[functions."resend-big-form"]
+  included_files = ["netlify/assets/handbook-texas-state-beauty-2026.pdf"]
+
+[functions."submit-registration"]
+  included_files = ["netlify/assets/handbook-texas-state-beauty-2026.pdf"]
+
 # Keep the two public registration experiences separate while serving both from
 # this one deployment. The Honor Roll domain must be assigned to this Netlify
 # project as a domain alias before this rewrite becomes active.

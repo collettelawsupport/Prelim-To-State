@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { loadBigFormHandbookAttachment } from './handbook.mts';
 import type { RegistrationRecord } from './types.mts';
 
 export type InvitationEmailProvider = 'gmail' | 'resend';
@@ -72,6 +73,8 @@ export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormU
       '',
       'Please take the time to read through it carefully and keep it handy throughout your state journey.',
       '',
+      'A copy of the 2026 Texas State Handbook is attached to this email.',
+      '',
       'Read it! Learn it! Love it! Re-read it again! ❤️',
       '',
       'Many of the questions you may have about the state competition can be answered right there in your handbook.',
@@ -112,6 +115,7 @@ export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormU
       <h2 style="font-size:20px;color:#70264f;margin:28px 0 10px">📖 Read Your State Handbook</h2>
       <p>Your <strong>Texas State Handbook</strong> is your GO-TO guide for everything you need to know about the state competition!</p>
       <p>Please take the time to read through it carefully and keep it handy throughout your state journey.</p>
+      <p>A copy of the <strong>2026 Texas State Handbook</strong> is attached to this email.</p>
       <p><strong>Read it! Learn it! Love it! Re-read it again! ❤️</strong></p>
       <p>Many of the questions you may have about the state competition can be answered right there in your handbook.</p>
       <p>We are <strong>SO excited</strong> to have you joining us! We can’t wait to watch your family experience all the fun, friendships, memories, and excitement that come with being part of the Texas Our Little Miss family.</p>
@@ -134,6 +138,7 @@ export async function sendBigFormInvitation(
   if (!provider) return null;
 
   const message = buildBigFormInvitationEmail(record, bigFormUrl);
+  const handbook = await loadBigFormHandbookAttachment();
   const recipients = bigFormInvitationRecipients(record);
   if (provider === 'gmail') {
     const user = process.env.GMAIL_USER!.trim();
@@ -153,6 +158,7 @@ export async function sendBigFormInvitation(
         ...(recipients.cc.length ? { cc: recipients.cc } : {}),
         replyTo: user,
         ...message,
+        attachments: [handbook],
       });
     } catch (error) {
       const details = error && typeof error === 'object' ? error as { code?: unknown; responseCode?: unknown } : {};
@@ -183,6 +189,10 @@ export async function sendBigFormInvitation(
       to: recipients.to,
       ...(recipients.cc.length ? { cc: recipients.cc } : {}),
       ...message,
+      attachments: [{
+        filename: handbook.filename,
+        content: handbook.content.toString('base64'),
+      }],
     }),
   });
   if (!response.ok) {

@@ -11,6 +11,11 @@ import {
   configuredInvitationEmailProvider,
   invitationIdempotencyKey,
 } from '../netlify/lib/email.mts';
+import {
+  BIG_FORM_HANDBOOK_CONTENT_TYPE,
+  BIG_FORM_HANDBOOK_FILENAME,
+  loadBigFormHandbookAttachment,
+} from '../netlify/lib/handbook.mts';
 import { publicQuickBooksInvoiceUrl } from '../netlify/lib/invoice-url.mts';
 import {
   InvitationEmailNotConfiguredError,
@@ -236,12 +241,22 @@ test('puts the personalized Texas State BIG Forms link in the full invitation em
   assert.match(message.html, /Dear Texas Our Little Miss Family/);
   assert.match(message.html, /Join Our Texas State Facebook Group/);
   assert.match(message.html, /Read Your State Handbook/);
+  assert.match(message.html, /2026 Texas State Handbook.*attached/i);
   assert.match(message.html, /registration=11111111-1111-4111-8111-111111111111/);
   assert.match(message.html, /workflow=prelim/);
   assert.match(message.text, /Texas State BIG Forms:/);
+  assert.match(message.text, /2026 Texas State Handbook is attached/i);
   assert.ok(message.text.includes(bigFormUrl));
   assert.doesNotMatch(JSON.stringify(message), /docs\.google\.com\/forms/i);
   assert.doesNotMatch(message.text, /50%|Honor Roll|Winner's Circle/i);
+});
+
+test('loads the valid PDF attached to each Big Form invitation', async () => {
+  const attachment = await loadBigFormHandbookAttachment();
+  assert.equal(attachment.filename, BIG_FORM_HANDBOOK_FILENAME);
+  assert.equal(attachment.contentType, BIG_FORM_HANDBOOK_CONTENT_TYPE);
+  assert.equal(attachment.content.subarray(0, 5).toString('ascii'), '%PDF-');
+  assert.ok(attachment.content.length > 1_000_000);
 });
 
 test('prefers Gmail, keeps Resend optional, and does not expose credentials in generated content', () => {
