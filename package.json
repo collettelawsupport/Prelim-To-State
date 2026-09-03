@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "lint": "eslint . --ignore-pattern .next --ignore-pattern out",
+    "lint": "eslint . --ignore-pattern .next --ignore-pattern out --ignore-pattern .netlify",
     "test": "node --experimental-strip-types --test tests/*.test.mts",
     "typecheck": "tsc --noEmit"
   },
