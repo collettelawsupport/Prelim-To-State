@@ -284,7 +284,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
   };
 
   return (
-    <main>
+    <main className="registration-page">
       <header className="site-header">
         <a className="brand" href="#top" aria-label={`Texas Our Little Miss ${workflow === 'prelim' ? 'preliminary' : 'Honor Roll'} registration home`}>
           <span className="brand-mark" aria-hidden="true">OLM</span>
