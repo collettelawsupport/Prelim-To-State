@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Config } from '@netlify/functions';
-import { REGISTRATION_WAIVER_CREDIT_CENTS } from '../../app/registration-data.ts';
+import { registrationConfigurationFor } from '../../app/registration-data.ts';
 import { HttpError, errorResponse, json, readJsonBody, safeErrorDetails } from '../lib/http.mts';
 import { publicQuickBooksInvoiceUrl } from '../lib/invoice-url.mts';
 import { sendEligibleRegistrationInvitation } from '../lib/paid-registration.mts';
@@ -93,6 +93,7 @@ export default async function submitRegistration(request: Request) {
     const submissionKey = normalizeSubmissionKey('submissionKey' in parsed ? parsed.submissionKey : null);
     const normalized = normalizeRegistrationValues('values' in parsed ? parsed.values : null, workflow);
     const waiverRequested = registrationWaiverRequested('waiverCode' in parsed ? parsed.waiverCode : null);
+    const waiverCreditCents = registrationConfigurationFor(workflow).waiverCreditCents;
     await assertRegistrationWorkflowReady();
     record = await getRegistrationByRequest(workflow, submissionKey);
     if (!record) {
@@ -111,7 +112,7 @@ export default async function submitRegistration(request: Request) {
         depositCents: normalized.depositCents,
         ...(waiverRequested ? {
           waiver: {
-            creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+            creditCents: waiverCreditCents,
             appliedAt: now,
           },
         } : {}),
@@ -121,7 +122,7 @@ export default async function submitRegistration(request: Request) {
         throw new HttpError('This registration already has a QuickBooks payment invoice. Please contact registration support to apply a waiver.', 409);
       }
       record.waiver = {
-        creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+        creditCents: waiverCreditCents,
         appliedAt: new Date().toISOString(),
       };
       record.status = 'payment_waived';

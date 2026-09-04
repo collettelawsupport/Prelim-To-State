@@ -523,6 +523,7 @@ export async function sendInvoice(invoiceId: string, email: string) {
 export async function updatePaidInvoiceMessage(record: RegistrationRecord, bigFormUrl: string) {
   const invoiceId = record.qbo?.invoiceId;
   if (!invoiceId) throw new Error('The registration has no QuickBooks invoice.');
+  const waiverCreditCents = registrationConfigurationFor(record.workflow).waiverCreditCents;
   const current = await getInvoice(invoiceId);
   const syncToken = typeof current.SyncToken === 'string' ? current.SyncToken : '';
   await qboRequest(`/invoice?operation=update&minorversion=${MINOR_VERSION}`, {
@@ -533,7 +534,7 @@ export async function updatePaidInvoiceMessage(record: RegistrationRecord, bigFo
       sparse: true,
       CustomerMemo: {
         value: record.waiver?.appliedAt
-          ? `Initial payment waived. A $${record.waiver.creditCents / 100} registration credit will be applied after the Big Form is completed: ${bigFormUrl}`
+          ? `Initial payment waived. A $${waiverCreditCents / 100} registration credit will be applied after the Big Form is completed: ${bigFormUrl}`
           : `Deposit paid. Complete the contestant Big Form here: ${bigFormUrl}`,
       },
     }),
@@ -556,7 +557,7 @@ export async function updateInvoiceFromBigForm(record: RegistrationRecord, fees:
     ? ` ${fees.pendingCount} Big Form selection(s) have pending prices and are not included yet.`
     : '';
   const paymentCreditMemo = record.waiver?.appliedAt
-    ? `A $${record.waiver.creditCents / 100} Texas Our Little Miss registration waiver credit is applied. No initial payment was collected.`
+    ? `A $${configuration.waiverCreditCents / 100} Texas Our Little Miss registration waiver credit is applied. No initial payment was collected.`
     : `The $${record.depositCents / 100} deposit remains applied.`;
   const body = {
     Id: invoiceId,

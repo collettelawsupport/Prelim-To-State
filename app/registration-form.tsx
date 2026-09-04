@@ -2,7 +2,6 @@
 
 import { FormEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  REGISTRATION_WAIVER_CREDIT_CENTS,
   ageDivisions,
   ageUnits,
   formatCurrency,
@@ -394,7 +393,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
               <p>Step 3 of 3</p>
               <h2 id="step-2-title">Release and required payment</h2>
               <span>{waiverCodeEntered
-                ? `Review the release, sign electronically, and submit the approved waiver code for a ${formatCurrency(REGISTRATION_WAIVER_CREDIT_CENTS)} registration credit.`
+                ? `Review the release, sign electronically, and submit the approved waiver code for a ${formatCurrency(configuration.waiverCreditCents)} registration credit.`
                 : `Review the release, sign electronically, and continue directly to the secure ${formatCurrency(configuration.depositCents)} payment screen from QuickBooks.`}</span>
             </div>
             <article className="info-panel release-panel">
@@ -428,7 +427,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
                   setSubmissionError('');
                 }}
               />
-              <small>If Texas Our Little Miss gave you a waiver code, enter it here. A valid code means no payment is due today, applies a {formatCurrency(REGISTRATION_WAIVER_CREDIT_CENTS)} credit to the updated registration invoice, and sends the Big Form immediately.</small>
+              <small>If Texas Our Little Miss gave you a waiver code, enter it here. A valid code means no payment is due today, applies a {formatCurrency(configuration.waiverCreditCents)} credit to the updated registration invoice, and sends the Big Form immediately.</small>
             </label>
             <aside className="invoice-summary" aria-label="Required payment summary">
               <p>{waiverCodeEntered ? 'Coupon code review' : 'Required QuickBooks payment'}</p>
@@ -436,7 +435,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
                 <span>{waiverCodeEntered ? 'Due today with a valid code' : 'Deposit due now'}</span>
                 <strong>{formatCurrency(waiverCodeEntered ? 0 : configuration.depositCents)}</strong>
               </div>
-              {waiverCodeEntered && <div><span>Credit on updated invoice</span><strong>{formatCurrency(REGISTRATION_WAIVER_CREDIT_CENTS)}</strong></div>}
+              {waiverCodeEntered && <div><span>Credit on updated invoice</span><strong>{formatCurrency(configuration.waiverCreditCents)}</strong></div>}
               <small>{waiverCodeEntered
                 ? 'Selecting Submit verifies the code securely. If it is valid, no payment screen opens and the personalized Big Form link is emailed immediately. The code is not saved with the contestant registration.'
                 : `Selecting Continue creates and emails the QuickBooks invoice, then opens its secure payment screen. The registration remains pending and the contestant's place is not secured until the deposit is paid. QuickBooks applies the payment to this invoice automatically. ${configuration.afterBigFormCopy}`}</small>

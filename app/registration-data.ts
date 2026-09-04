@@ -2,7 +2,6 @@ export type RegistrationWorkflow = 'prelim' | 'honor_roll';
 
 export const DEPOSIT_CENTS = 15_000;
 export const HONOR_ROLL_DEPOSIT_CENTS = 10_000;
-export const REGISTRATION_WAIVER_CREDIT_CENTS = 10_000;
 export const HONOR_ROLL_OPTIONAL_DISCOUNT = 0.5;
 
 export const ageUnits = ['months', 'years'] as const;
@@ -99,6 +98,7 @@ export const registrationConfigurations = {
     depositDueLabel: 'October 8, 2026',
     finalInvoiceDueDate: '2026-10-08',
     depositCents: DEPOSIT_CENTS,
+    waiverCreditCents: DEPOSIT_CENTS,
     entryLevels,
     registrationSteps,
     importantInformation,
@@ -119,6 +119,7 @@ export const registrationConfigurations = {
     depositDueLabel: 'October 9, 2026',
     finalInvoiceDueDate: '2026-10-09',
     depositCents: HONOR_ROLL_DEPOSIT_CENTS,
+    waiverCreditCents: HONOR_ROLL_DEPOSIT_CENTS,
     entryLevels: honorRollEntryLevels,
     registrationSteps: honorRollRegistrationSteps,
     importantInformation: honorRollImportantInformation,

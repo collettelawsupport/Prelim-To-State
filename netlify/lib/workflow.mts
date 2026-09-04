@@ -2,7 +2,6 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { publicQuickBooksInvoiceUrl } from './invoice-url.mts';
 import {
   HONOR_ROLL_OPTIONAL_DISCOUNT,
-  REGISTRATION_WAIVER_CREDIT_CENTS,
   ageDivisions,
   ageUnits,
   entryLevelFor,
@@ -162,7 +161,8 @@ export function buildDepositInvoice(record: RegistrationRecord, registrationItem
   const deposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
   const remainingBalanceCents = Math.max(0, record.entryFeeCents - record.depositCents);
   const remainingBalance = (remainingBalanceCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
-  const waiverCredit = ((record.waiver?.creditCents || 0) / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const waiverCreditCents = record.waiver?.appliedAt ? configuration.waiverCreditCents : 0;
+  const waiverCredit = (waiverCreditCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
   const waiverApplied = Boolean(record.waiver?.appliedAt);
   return {
     CustomerRef: { value: record.qbo?.customerId },
@@ -201,6 +201,7 @@ export function classificationForEntryLevel(entryLevel: string, workflow: Regist
 }
 
 export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigFormFeeSummary, registrationItemId: string, optionalItemId: string) {
+  const configuration = registrationConfigurationFor(record.workflow);
   const entry = entryLevelFor(record.values.entry_level, record.workflow);
   if (!entry) throw new Error('The registration entry level is no longer valid.');
   const entryDescription = `2026 state competition entry fee — ${entry.label}`;
@@ -227,7 +228,7 @@ export function buildFinalInvoiceLines(record: RegistrationRecord, fees: BigForm
     lines.push(salesLine(amount, description, optionalItemId, quantity, unitPrice));
   }
   if (record.waiver?.appliedAt) {
-    const creditCents = Math.min(record.waiver.creditCents, REGISTRATION_WAIVER_CREDIT_CENTS);
+    const creditCents = Math.min(configuration.waiverCreditCents, record.depositCents, record.entryFeeCents);
     lines.push(discountLine(creditCents / 100, 'Texas Our Little Miss registration waiver credit'));
   }
   return lines;

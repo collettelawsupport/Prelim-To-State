@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import test from 'node:test';
-import { DEPOSIT_CENTS, REGISTRATION_WAIVER_CREDIT_CENTS, entryLevels } from '../app/registration-data.ts';
+import { DEPOSIT_CENTS, entryLevels } from '../app/registration-data.ts';
 import { revokeQuickBooksConnection } from '../netlify/functions/quickbooks-disconnect.mts';
 import { config as reconciliationConfig } from '../netlify/functions/reconcile-qbo-payments.mts';
 import {
@@ -172,12 +172,12 @@ test('verifies the server-only waiver code without storing or returning it', () 
   );
 });
 
-test('waives payment today and carries exactly a $100 credit to the updated invoice', () => {
+test('waives the full $150 Preliminary deposit on the updated invoice', () => {
   const waivedRecord: RegistrationRecord = {
     ...structuredClone(record),
     status: 'payment_waived',
     waiver: {
-      creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+      creditCents: DEPOSIT_CENTS,
       appliedAt: '2026-09-01T12:30:00.000Z',
     },
   };
@@ -186,10 +186,10 @@ test('waives payment today and carries exactly a $100 credit to the updated invo
   assert.equal(initialInvoice.Line[1].DetailType, 'DiscountLineDetail');
   assert.equal(initialInvoice.AllowOnlinePayment, false);
   assert.match(initialInvoice.CustomerMemo.value, /No payment is due today/i);
-  assert.match(initialInvoice.CustomerMemo.value, /\$100\.00 registration credit/i);
+  assert.match(initialInvoice.CustomerMemo.value, /\$150\.00 registration credit/i);
 
   const finalLines = buildFinalInvoiceLines(waivedRecord, { lines: [], knownTotal: 0, pendingCount: 0 }, '7', '8');
-  assert.deepEqual(finalLines.map((line) => line.Amount), [370, 0, 100]);
+  assert.deepEqual(finalLines.map((line) => line.Amount), [370, 0, 150]);
   assert.equal(finalLines[2].DetailType, 'DiscountLineDetail');
   assert.match(String(finalLines[2].Description), /registration waiver credit/i);
   assert.doesNotMatch(String(finalLines[1].Description), /previously paid/i);
@@ -302,7 +302,7 @@ test('uses a fresh provider idempotency key for each requested resend', () => {
 test('exposes the secured Big Form link after payment without treating a QuickBooks memo as email', () => {
   const waivedRecord: RegistrationRecord = {
     ...structuredClone(record),
-    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
     bigFormInvitationSentAt: '2026-09-01T12:31:00.000Z',
     bigFormInvitationMethod: 'quickbooks',
   };
@@ -310,13 +310,31 @@ test('exposes the secured Big Form link after payment without treating a QuickBo
   assert.equal(status.paymentSatisfied, true);
   assert.equal(status.invitationSent, false);
   assert.equal(new URL(status.bigFormUrl).searchParams.get('workflow_token'), record.workflowToken);
-  assert.equal(publicStatus(record, { BIG_FORM_URL: 'https://bigforms.example' }).bigFormUrl, '');
+  const pendingStatus = publicStatus(record, { BIG_FORM_URL: 'https://bigforms.example' });
+  assert.equal(pendingStatus.paid, false);
+  assert.equal(pendingStatus.paymentSatisfied, false);
+  assert.equal(pendingStatus.invitationSent, false);
+  assert.equal(pendingStatus.bigFormUrl, '');
+});
+
+test('invoice creation alone cannot expose or email the Big Form', async () => {
+  let invitationCount = 0;
+  await assert.rejects(
+    () => sendEligibleRegistrationInvitation(structuredClone(record), {
+      sendBigFormInvitation: async () => {
+        invitationCount += 1;
+        return 'gmail' as const;
+      },
+    }),
+    /payment requirement has not been satisfied/i,
+  );
+  assert.equal(invitationCount, 0);
 });
 
 test('does not mark an invitation sent when no direct email provider is configured', async () => {
   const mutableRecord: RegistrationRecord = {
     ...structuredClone(record),
-    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
   };
   let releasedClaims = 0;
   await assert.rejects(
@@ -338,7 +356,7 @@ test('does not mark an invitation sent when no direct email provider is configur
 test('retries registrations previously marked sent through the QuickBooks fallback', async () => {
   const mutableRecord: RegistrationRecord = {
     ...structuredClone(record),
-    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
     bigFormInvitationSentAt: '2026-09-01T12:31:00.000Z',
     bigFormInvitationMethod: 'quickbooks',
   };
@@ -359,7 +377,7 @@ test('retries registrations previously marked sent through the QuickBooks fallba
 test('manual resend delivers to the stored address with a fresh attempt and rate limit', async () => {
   const mutableRecord: RegistrationRecord = {
     ...structuredClone(record),
-    waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
     bigFormInvitationSentAt: '2026-09-01T12:31:00.000Z',
     bigFormInvitationMethod: 'resend',
   };
@@ -443,7 +461,7 @@ test('approved waiver sends the Big Form without checking for a QuickBooks payme
     ...structuredClone(record),
     status: 'payment_waived',
     waiver: {
-      creditCents: REGISTRATION_WAIVER_CREDIT_CENTS,
+      creditCents: DEPOSIT_CENTS,
       appliedAt: '2026-09-01T12:30:00.000Z',
     },
   };
@@ -467,9 +485,9 @@ test('approved waiver sends the Big Form without checking for a QuickBooks payme
   assert.equal(mutableRecord.bigFormInvitationSentAt, '2026-09-01T13:00:00.000Z');
 });
 
-test('missing or delayed payment state remains retryable and sends after QuickBooks settles', async () => {
+test('partial or delayed payment remains pending and sends only after QuickBooks settles in full', async () => {
   const mutableRecord = structuredClone(record);
-  let balance = 150;
+  let balance = 50;
   let invitationCount = 0;
   const dependencies = {
     getRegistrationByInvoice: async () => mutableRecord,
@@ -487,6 +505,7 @@ test('missing or delayed payment state remains retryable and sends after QuickBo
   assert.equal(await reconcilePaidInvoice('99', 'webhook', dependencies), 'unpaid');
   assert.equal(invitationCount, 0);
   assert.equal(mutableRecord.paidAt, undefined);
+  assert.equal(mutableRecord.status, 'invoice_created');
   balance = 0;
   assert.equal(await reconcilePaidInvoice('99', 'scheduled', dependencies), 'sent');
   assert.equal(invitationCount, 1);

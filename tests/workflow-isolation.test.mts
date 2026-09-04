@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
-  REGISTRATION_WAIVER_CREDIT_CENTS,
   ageDivisions,
   registrationConfigurationFor,
 } from '../app/registration-data.ts';
@@ -148,10 +147,10 @@ test('creates distinct invoices and applies Honor Roll discounts only to Honor R
   assert.match(honorLines[2].Description, /Honor Roll 50%/);
 });
 
-test('applies the same private $100 waiver credit without exposing cross-form deposit pricing', () => {
+test('applies each form\'s full deposit waiver without exposing cross-form pricing', () => {
   const appliedAt = '2026-09-01T12:30:00.000Z';
-  const prelim = { ...registration('prelim', 'queen_king'), waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt } };
-  const honor = { ...registration('honor_roll', 'honor_roll'), waiver: { creditCents: REGISTRATION_WAIVER_CREDIT_CENTS, appliedAt } };
+  const prelim = { ...registration('prelim', 'queen_king'), waiver: { creditCents: registrationConfigurationFor('prelim').waiverCreditCents, appliedAt } };
+  const honor = { ...registration('honor_roll', 'honor_roll'), waiver: { creditCents: registrationConfigurationFor('honor_roll').waiverCreditCents, appliedAt } };
 
   const prelimInitial = buildDepositInvoice(prelim, '7');
   const honorInitial = buildDepositInvoice(honor, '7');
@@ -163,7 +162,7 @@ test('applies the same private $100 waiver credit without exposing cross-form de
   const emptyFees = { lines: [], knownTotal: 0, pendingCount: 0 };
   const prelimFinal = buildFinalInvoiceLines(prelim, emptyFees, '7', '8');
   const honorFinal = buildFinalInvoiceLines(honor, emptyFees, '7', '8');
-  assert.equal(prelimFinal.at(-1)?.Amount, 100);
+  assert.equal(prelimFinal.at(-1)?.Amount, 150);
   assert.equal(honorFinal.at(-1)?.Amount, 100);
   assert.equal(prelimFinal.at(-1)?.DetailType, 'DiscountLineDetail');
   assert.equal(honorFinal.at(-1)?.DetailType, 'DiscountLineDetail');
