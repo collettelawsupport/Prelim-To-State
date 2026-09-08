@@ -30,6 +30,7 @@ export type RegistrationRecord = {
     invoiceUrl?: string;
   };
   invoiceCreatedAt?: string;
+  paymentWindowStartedAt?: string;
   invoiceExpiresAt?: string;
   invoiceVoidedAt?: string;
   quickBooksInvoiceEmailedAt?: string;

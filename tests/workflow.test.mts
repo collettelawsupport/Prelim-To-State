@@ -21,6 +21,7 @@ import {
 import { publicQuickBooksInvoiceUrl } from '../netlify/lib/invoice-url.mts';
 import {
   ensurePendingPaymentInvoiceDelivery,
+  paymentInvoiceDeliveryStartedAt,
   paymentInvoiceExpirationAt,
   UNPAID_INVOICE_EXPIRATION_MS,
 } from '../netlify/lib/pending-payment.mts';
@@ -46,7 +47,11 @@ import {
   registrationInvoiceDocNumber,
   refreshQuickBooksTokens,
 } from '../netlify/lib/quickbooks.mts';
-import { registrationStoreName, type QuickBooksTokens } from '../netlify/lib/store.mts';
+import {
+  registrationNeedsInvoiceReconciliation,
+  registrationStoreName,
+  type QuickBooksTokens,
+} from '../netlify/lib/store.mts';
 import type { RegistrationRecord } from '../netlify/lib/types.mts';
 import {
   buildBigFormUrl,
@@ -109,6 +114,19 @@ const record: RegistrationRecord = {
   depositCents: 15_000,
   qbo: { customerId: '42', invoiceId: '99' },
 };
+
+async function confirmPaymentInvoiceDelivery(updated: RegistrationRecord) {
+  const deliveredAt = updated.paymentWindowStartedAt || '2026-09-01T12:01:00.000Z';
+  updated.quickBooksInvoiceEmailedAt ||= deliveredAt;
+  updated.paymentWindowStartedAt ||= deliveredAt;
+  updated.invoiceExpiresAt ||= paymentInvoiceExpirationAt(deliveredAt);
+  return {
+    directEmailSent: Boolean(updated.paymentLinkEmailSentAt),
+    invoiceUrl: updated.qbo?.invoiceUrl || '',
+    quickBooksEmailSent: true,
+    required: true,
+  };
+}
 
 function workflowEnvironment() {
   const environment = Object.fromEntries([
@@ -314,7 +332,8 @@ test('delivers each pending invoice through QuickBooks and a direct resumable-li
   assert.equal(mutableRecord.quickBooksInvoiceEmailedAt, '2026-09-01T12:01:00.000Z');
   assert.equal(mutableRecord.paymentLinkEmailSentAt, '2026-09-01T12:01:00.000Z');
   assert.equal(mutableRecord.paymentLinkEmailMethod, 'gmail');
-  assert.equal(mutableRecord.invoiceExpiresAt, '2026-09-02T12:00:00.000Z');
+  assert.equal(mutableRecord.paymentWindowStartedAt, '2026-09-01T12:01:00.000Z');
+  assert.equal(mutableRecord.invoiceExpiresAt, '2026-09-02T12:01:00.000Z');
   assert.equal(saveCount, 1);
 
   await ensurePendingPaymentInvoiceDelivery(mutableRecord, dependencies);
@@ -323,9 +342,83 @@ test('delivers each pending invoice through QuickBooks and a direct resumable-li
   assert.equal(saveCount, 1);
 });
 
+test('emails a legacy unpaid invoice and starts a fresh 24-hour window from delivery', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    invoiceCreatedAt: '2026-09-01T12:00:00.000Z',
+    invoiceExpiresAt: '2026-09-02T12:00:00.000Z',
+    quickBooksInvoiceEmailedAt: '2026-09-01T12:01:00.000Z',
+    paymentLinkEmailSentAt: '2026-09-01T12:01:00.000Z',
+  };
+  let quickBooksEmailCount = 0;
+  let directEmailCount = 0;
+  await ensurePendingPaymentInvoiceDelivery(mutableRecord, {
+    sendQuickBooksInvoice: async () => {
+      quickBooksEmailCount += 1;
+      return {
+        invoiceNumber: 'OLM-P-111111111111411',
+        invoiceUrl: 'https://app.qbo.intuit.com/app/invoice?txnId=99',
+      };
+    },
+    getInvoice: async () => assert.fail('The QuickBooks email response includes the payment link.'),
+    sendPaymentInvoiceEmail: async () => {
+      directEmailCount += 1;
+      return 'gmail' as const;
+    },
+    saveRegistration: async (updated: RegistrationRecord) => updated,
+    now: () => '2026-09-08T09:00:00.000Z',
+    logger: quietLogger,
+  });
+
+  assert.equal(quickBooksEmailCount, 1);
+  assert.equal(directEmailCount, 1);
+  assert.equal(mutableRecord.paymentWindowStartedAt, '2026-09-08T09:00:00.000Z');
+  assert.equal(mutableRecord.invoiceExpiresAt, '2026-09-09T09:00:00.000Z');
+  assert.equal(paymentInvoiceDeliveryStartedAt(mutableRecord), '2026-09-08T09:00:00.000Z');
+});
+
+test('never emails or starts a payment clock for an approved waiver', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    status: 'payment_waived',
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:30:00.000Z' },
+  };
+  const delivery = await ensurePendingPaymentInvoiceDelivery(mutableRecord, {
+    sendQuickBooksInvoice: async () => assert.fail('A waived registration must not receive a payment invoice email.'),
+    sendPaymentInvoiceEmail: async () => assert.fail('A waived registration must not receive a payment-link email.'),
+  });
+
+  assert.equal(delivery.required, false);
+  assert.equal(mutableRecord.paymentWindowStartedAt, undefined);
+  assert.equal(mutableRecord.invoiceExpiresAt, undefined);
+});
+
 test('uses a 24-hour unpaid-invoice payment window', () => {
   assert.equal(UNPAID_INVOICE_EXPIRATION_MS, 86_400_000);
   assert.equal(paymentInvoiceExpirationAt(record.createdAt), '2026-09-02T12:00:00.000Z');
+});
+
+test('reconciles unfinished deposits even if an earlier Big Form email was recorded', () => {
+  const unfinished: RegistrationRecord = {
+    ...structuredClone(record),
+    bigFormInvitationSentAt: '2026-09-01T12:30:00.000Z',
+    bigFormInvitationMethod: 'gmail',
+  };
+  assert.equal(registrationNeedsInvoiceReconciliation(unfinished), true);
+  assert.equal(registrationNeedsInvoiceReconciliation({
+    ...structuredClone(unfinished),
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:00:00.000Z' },
+  }), false);
+  assert.equal(registrationNeedsInvoiceReconciliation({
+    ...structuredClone(record),
+    status: 'payment_waived',
+    waiver: { creditCents: DEPOSIT_CENTS, appliedAt: '2026-09-01T12:00:00.000Z' },
+  }), true);
+  assert.equal(registrationNeedsInvoiceReconciliation({
+    ...structuredClone(unfinished),
+    bigFormSubmissionId: 'big-form-123',
+    invoiceUpdatedAt: '2026-09-01T14:00:00.000Z',
+  }), false);
 });
 
 test('loads the valid PDF attached to each Big Form invitation', async () => {
@@ -546,6 +639,7 @@ test('approved waiver sends the Big Form without checking for a QuickBooks payme
   assert.equal(await reconcilePaidInvoice('99', 'scheduled', {
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => assert.fail('A waived registration must not wait for invoice payment.'),
+    ensurePendingPaymentInvoiceDelivery: async () => assert.fail('A waived registration must not receive a payment email.'),
     saveRegistration: async (updated: RegistrationRecord) => updated,
     sendBigFormInvitation: async () => {
       invitationCount += 1;
@@ -569,6 +663,7 @@ test('partial or delayed payment remains pending and sends only after QuickBooks
   const dependencies = {
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => ({ TotalAmt: 150, Balance: balance }),
+    ensurePendingPaymentInvoiceDelivery: confirmPaymentInvoiceDelivery,
     saveRegistration: async (updated: RegistrationRecord) => updated,
     sendBigFormInvitation: async () => {
       invitationCount += 1;
@@ -588,8 +683,50 @@ test('partial or delayed payment remains pending and sends only after QuickBooks
   assert.equal(invitationCount, 1);
 });
 
+test('backfills an old unpaid registration before evaluating its fresh deadline', async () => {
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    invoiceCreatedAt: '2026-09-01T12:00:00.000Z',
+    invoiceExpiresAt: '2026-09-02T12:00:00.000Z',
+    bigFormInvitationSentAt: '2026-09-01T12:30:00.000Z',
+    bigFormInvitationMethod: 'gmail',
+  };
+  let deliveryCount = 0;
+  let voidCount = 0;
+  const result = await reconcilePaidInvoice('99', 'scheduled', {
+    getRegistrationByInvoice: async () => mutableRecord,
+    getInvoice: async () => ({ TotalAmt: 150, Balance: 150, SyncToken: '4' }),
+    ensurePendingPaymentInvoiceDelivery: async (updated: RegistrationRecord) => {
+      deliveryCount += 1;
+      updated.quickBooksInvoiceEmailedAt = '2026-09-08T09:00:00.000Z';
+      updated.paymentLinkEmailSentAt = '2026-09-08T09:00:00.000Z';
+      updated.paymentWindowStartedAt = '2026-09-08T09:00:00.000Z';
+      updated.invoiceExpiresAt = '2026-09-09T09:00:00.000Z';
+      return { directEmailSent: true, invoiceUrl: '', quickBooksEmailSent: true, required: true };
+    },
+    saveRegistration: async (updated: RegistrationRecord) => updated,
+    claimInvoiceExpiration: async () => assert.fail('A newly delivered invoice must receive its full payment window.'),
+    releaseInvoiceExpirationClaim: async () => undefined,
+    voidInvoice: async () => {
+      voidCount += 1;
+      return {};
+    },
+    now: () => '2026-09-08T09:00:00.000Z',
+  });
+
+  assert.equal(result, 'unpaid');
+  assert.equal(deliveryCount, 1);
+  assert.equal(voidCount, 0);
+  assert.equal(mutableRecord.invoiceExpiresAt, '2026-09-09T09:00:00.000Z');
+});
+
 test('voids a completely unpaid registration invoice after 24 hours and marks it expired', async () => {
-  const mutableRecord = structuredClone(record);
+  const mutableRecord: RegistrationRecord = {
+    ...structuredClone(record),
+    quickBooksInvoiceEmailedAt: '2026-09-01T12:00:00.000Z',
+    paymentWindowStartedAt: '2026-09-01T12:00:00.000Z',
+    invoiceExpiresAt: '2026-09-02T12:00:00.000Z',
+  };
   let voidCount = 0;
   let releaseCount = 0;
   const result = await reconcilePaidInvoice('99', 'scheduled', {
@@ -600,6 +737,7 @@ test('voids a completely unpaid registration invoice after 24 hours and marks it
       SyncToken: '4',
       MetaData: { CreateTime: '2026-09-01T12:00:00.000Z' },
     }),
+    ensurePendingPaymentInvoiceDelivery: confirmPaymentInvoiceDelivery,
     saveRegistration: async (updated: RegistrationRecord) => updated,
     claimInvoiceExpiration: async () => true,
     releaseInvoiceExpirationClaim: async () => { releaseCount += 1; },
@@ -631,6 +769,7 @@ test('never expires an invoice with a partial payment even after 24 hours', asyn
   const result = await reconcilePaidInvoice('99', 'scheduled', {
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => ({ TotalAmt: 150, Balance: 50, SyncToken: '5' }),
+    ensurePendingPaymentInvoiceDelivery: confirmPaymentInvoiceDelivery,
     saveRegistration: async (updated: RegistrationRecord) => updated,
     claimInvoiceExpiration: async () => assert.fail('A partially paid invoice must not be claimed for expiration.'),
     releaseInvoiceExpirationClaim: async () => undefined,

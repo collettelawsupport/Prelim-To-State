@@ -4,7 +4,6 @@ import { registrationConfigurationFor } from '../../app/registration-data.ts';
 import { HttpError, errorResponse, json, readJsonBody, safeErrorDetails } from '../lib/http.mts';
 import {
   ensurePendingPaymentInvoiceDelivery,
-  paymentInvoiceExpirationAt,
 } from '../lib/pending-payment.mts';
 import { sendEligibleRegistrationInvitation } from '../lib/paid-registration.mts';
 import {
@@ -59,7 +58,6 @@ async function ensureInvoice(record: RegistrationRecord) {
         activeRecord.qbo = { ...activeRecord.qbo, ...invoice };
         const invoiceCreatedAt = new Date().toISOString();
         activeRecord.invoiceCreatedAt ||= invoiceCreatedAt;
-        activeRecord.invoiceExpiresAt ||= paymentInvoiceExpirationAt(activeRecord.invoiceCreatedAt);
         activeRecord.status = 'invoice_created';
         await saveRegistration(activeRecord);
         await mapInvoice(invoice.invoiceId, activeRecord.id);

@@ -37,29 +37,31 @@ function validDate(value: string | undefined) {
   return Number.isFinite(timestamp) ? timestamp : null;
 }
 
-export function paymentInvoiceExpirationAt(createdAt: string) {
-  const timestamp = validDate(createdAt);
-  if (timestamp === null) throw new Error('The registration invoice creation time is invalid.');
+export function paymentInvoiceExpirationAt(startedAt: string) {
+  const timestamp = validDate(startedAt);
+  if (timestamp === null) throw new Error('The registration payment-window start time is invalid.');
   return new Date(timestamp + UNPAID_INVOICE_EXPIRATION_MS).toISOString();
 }
 
-export function paymentInvoiceCreatedAt(
-  record: RegistrationRecord,
-  invoice: Record<string, unknown> = {},
-) {
-  const metadata = invoice.MetaData && typeof invoice.MetaData === 'object'
-    ? invoice.MetaData as Record<string, unknown>
-    : {};
-  const quickBooksCreatedAt = typeof metadata.CreateTime === 'string' ? metadata.CreateTime : '';
-  return record.invoiceCreatedAt || quickBooksCreatedAt || record.createdAt;
+function earliestValidDate(...values: Array<string | undefined>) {
+  return values
+    .map((value) => ({ value, timestamp: validDate(value) }))
+    .filter((candidate): candidate is { value: string; timestamp: number } => candidate.timestamp !== null)
+    .sort((left, right) => left.timestamp - right.timestamp)[0]?.value;
+}
+
+export function paymentInvoiceDeliveryStartedAt(record: RegistrationRecord) {
+  if (validDate(record.paymentWindowStartedAt) !== null) return record.paymentWindowStartedAt!;
+  return earliestValidDate(record.quickBooksInvoiceEmailedAt, record.paymentLinkEmailSentAt);
 }
 
 export function paymentInvoiceExpiresAt(
   record: RegistrationRecord,
-  invoice: Record<string, unknown> = {},
 ) {
   if (validDate(record.invoiceExpiresAt) !== null) return record.invoiceExpiresAt!;
-  return paymentInvoiceExpirationAt(paymentInvoiceCreatedAt(record, invoice));
+  const deliveryStartedAt = paymentInvoiceDeliveryStartedAt(record);
+  if (!deliveryStartedAt) throw new Error('The registration payment window has not started because the invoice has not been emailed.');
+  return paymentInvoiceExpirationAt(deliveryStartedAt);
 }
 
 export type PendingPaymentDeliveryResult = {
@@ -86,8 +88,10 @@ export async function ensurePendingPaymentInvoiceDelivery(
   const invoiceId = record.qbo?.invoiceId;
   if (!invoiceId) throw new Error('The registration has no QuickBooks invoice to email.');
 
-  let quickBooksEmailSent = Boolean(record.quickBooksInvoiceEmailedAt);
-  let directEmailSent = Boolean(record.paymentLinkEmailSentAt);
+  const startFreshPaymentWindow = validDate(record.paymentWindowStartedAt) === null;
+  let quickBooksEmailSent = !startFreshPaymentWindow && Boolean(record.quickBooksInvoiceEmailedAt);
+  let directEmailSent = !startFreshPaymentWindow && Boolean(record.paymentLinkEmailSentAt);
+  let deliveredAtThisAttempt: string | undefined;
   let invoiceUrl = publicQuickBooksInvoiceUrl(record.qbo?.invoiceUrl);
   let changed = false;
   let quickBooksError = false;
@@ -95,10 +99,6 @@ export async function ensurePendingPaymentInvoiceDelivery(
 
   if (!record.invoiceCreatedAt) {
     record.invoiceCreatedAt = record.createdAt;
-    changed = true;
-  }
-  if (!record.invoiceExpiresAt) {
-    record.invoiceExpiresAt = paymentInvoiceExpirationAt(record.invoiceCreatedAt);
     changed = true;
   }
 
@@ -109,7 +109,9 @@ export async function ensurePendingPaymentInvoiceDelivery(
       record.qbo.invoiceNumber = sent.invoiceNumber || record.qbo.invoiceNumber;
       record.qbo.invoiceUrl = sent.invoiceUrl || invoiceUrl || record.qbo.invoiceUrl;
       invoiceUrl = sent.invoiceUrl || invoiceUrl;
-      record.quickBooksInvoiceEmailedAt = dependencies.now();
+      const deliveredAt = dependencies.now();
+      record.quickBooksInvoiceEmailedAt = deliveredAt;
+      deliveredAtThisAttempt = earliestValidDate(deliveredAtThisAttempt, deliveredAt);
       quickBooksEmailSent = true;
       changed = true;
     } catch {
@@ -137,7 +139,9 @@ export async function ensurePendingPaymentInvoiceDelivery(
       const provider = await dependencies.sendPaymentInvoiceEmail(record, invoiceUrl);
       if (provider) {
         record.paymentLinkEmailMethod = provider;
-        record.paymentLinkEmailSentAt = dependencies.now();
+        const deliveredAt = dependencies.now();
+        record.paymentLinkEmailSentAt = deliveredAt;
+        deliveredAtThisAttempt = earliestValidDate(deliveredAtThisAttempt, deliveredAt);
         directEmailSent = true;
         changed = true;
       }
@@ -148,6 +152,21 @@ export async function ensurePendingPaymentInvoiceDelivery(
   }
 
   if (quickBooksEmailSent || directEmailSent) {
+    const deliveredAt = earliestValidDate(record.quickBooksInvoiceEmailedAt, record.paymentLinkEmailSentAt);
+    if (startFreshPaymentWindow && deliveredAtThisAttempt) {
+      record.paymentWindowStartedAt = deliveredAtThisAttempt;
+      record.invoiceExpiresAt = paymentInvoiceExpirationAt(deliveredAtThisAttempt);
+      changed = true;
+    } else {
+      if (!record.paymentWindowStartedAt && deliveredAt) {
+        record.paymentWindowStartedAt = deliveredAt;
+        changed = true;
+      }
+      if (validDate(record.invoiceExpiresAt) === null && record.paymentWindowStartedAt) {
+        record.invoiceExpiresAt = paymentInvoiceExpirationAt(record.paymentWindowStartedAt);
+        changed = true;
+      }
+    }
     if (record.status === 'invoice_error') {
       record.status = 'invoice_created';
       changed = true;

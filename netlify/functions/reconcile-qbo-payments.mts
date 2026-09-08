@@ -1,8 +1,7 @@
 import type { Config } from '@netlify/functions';
 import { safeErrorDetails } from '../lib/http.mts';
 import { reconcilePaidInvoice } from '../lib/paid-registration.mts';
-import { ensurePendingPaymentInvoiceDelivery } from '../lib/pending-payment.mts';
-import { getRegistrationByInvoice, listRegistrationInvoicesAwaitingInvitation } from '../lib/store.mts';
+import { listRegistrationInvoicesAwaitingInvitation } from '../lib/store.mts';
 
 const BATCH_SIZE = 5;
 
@@ -13,18 +12,7 @@ export default async function reconcileQuickBooksPayments() {
 
   for (let index = 0; index < invoiceIds.length; index += BATCH_SIZE) {
     const batch = invoiceIds.slice(index, index + BATCH_SIZE);
-    const results = await Promise.allSettled(batch.map(async (invoiceId) => {
-      const result = await reconcilePaidInvoice(invoiceId, 'scheduled');
-      if (result === 'unpaid') {
-        const record = await getRegistrationByInvoice(invoiceId);
-        if (record) {
-          await ensurePendingPaymentInvoiceDelivery(record).catch((error) => {
-            console.error('Scheduled registration payment email retry failed.', safeErrorDetails(error));
-          });
-        }
-      }
-      return result;
-    }));
+    const results = await Promise.allSettled(batch.map((invoiceId) => reconcilePaidInvoice(invoiceId, 'scheduled')));
     for (const result of results) {
       if (result.status === 'fulfilled' && result.value === 'sent') sent += 1;
       if (result.status === 'fulfilled' && result.value === 'expired') expired += 1;

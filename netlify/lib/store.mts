@@ -107,6 +107,20 @@ export async function releaseInvoiceExpirationClaim(registrationId: string) {
   await store().delete(`invoice-expiration-claims/${registrationId}.json`);
 }
 
+export function registrationNeedsInvoiceReconciliation(record: RegistrationRecord) {
+  if (!record.qbo?.invoiceId || record.status === 'invoice_expired' || record.invoiceVoidedAt) return false;
+  const directInvitationSent = Boolean(
+    record.bigFormInvitationSentAt
+    && (record.bigFormInvitationMethod === 'gmail' || record.bigFormInvitationMethod === 'resend'),
+  );
+  const initialPaymentPending = !record.waiver?.appliedAt
+    && !record.paidAt
+    && !record.bigFormSubmissionId
+    && !record.invoiceUpdatedAt;
+  const invitationPending = Boolean(record.paidAt || record.waiver?.appliedAt) && !directInvitationSent;
+  return initialPaymentPending || invitationPending;
+}
+
 export async function listRegistrationInvoicesAwaitingInvitation(limit = 25) {
   const listed = await store().list({ prefix: 'invoices/' });
   const keys = listed.blobs.map((blob) => blob.key).sort();
@@ -118,12 +132,7 @@ export async function listRegistrationInvoicesAwaitingInvitation(limit = 25) {
     const key = keys[(start + offset) % keys.length];
     const invoiceId = key.slice('invoices/'.length).replace(/\.json$/, '');
     const record = await getRegistrationByInvoice(invoiceId);
-    if (
-      record?.qbo?.invoiceId
-      && record.status !== 'invoice_expired'
-      && !record.invoiceVoidedAt
-      && (!record.bigFormInvitationSentAt || record.bigFormInvitationMethod === 'quickbooks')
-    ) result.push(invoiceId);
+    if (record && registrationNeedsInvoiceReconciliation(record)) result.push(invoiceId);
   }
   return result;
 }

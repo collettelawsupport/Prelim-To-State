@@ -1,5 +1,8 @@
 import { sendBigFormInvitation as deliverBigFormInvitation } from './email.mts';
-import { paymentInvoiceExpiresAt } from './pending-payment.mts';
+import {
+  ensurePendingPaymentInvoiceDelivery as deliverPendingPaymentInvoice,
+  paymentInvoiceExpiresAt,
+} from './pending-payment.mts';
 import {
   getInvoice as loadQuickBooksInvoice,
   voidInvoice as voidQuickBooksInvoice,
@@ -44,6 +47,7 @@ export class InvitationDeliveryBusyError extends Error {
 export type PaidRegistrationDependencies = {
   getRegistrationByInvoice: (invoiceId: string) => Promise<RegistrationRecord | null>;
   getInvoice: (invoiceId: string) => Promise<Record<string, unknown>>;
+  ensurePendingPaymentInvoiceDelivery: (record: RegistrationRecord) => Promise<unknown>;
   saveRegistration: (record: RegistrationRecord) => Promise<RegistrationRecord>;
   sendBigFormInvitation: typeof deliverBigFormInvitation;
   claimBigFormInvitation: (registrationId: string) => Promise<boolean>;
@@ -60,6 +64,7 @@ export type PaidRegistrationDependencies = {
 const defaultDependencies: PaidRegistrationDependencies = {
   getRegistrationByInvoice: loadRegistrationByInvoice,
   getInvoice: loadQuickBooksInvoice,
+  ensurePendingPaymentInvoiceDelivery: deliverPendingPaymentInvoice,
   saveRegistration: persistRegistration,
   sendBigFormInvitation: deliverBigFormInvitation,
   claimBigFormInvitation: acquireInvitationClaim,
@@ -194,9 +199,8 @@ export async function reconcilePaidInvoice(
   const record = await dependencies.getRegistrationByInvoice(invoiceId);
   if (!record) return 'missing_registration';
   if (record.status === 'invoice_expired' || record.invoiceVoidedAt) return 'expired';
-  if (directInvitationAlreadySent(record)) return 'already_sent';
-
   if (record.waiver?.appliedAt) {
+    if (directInvitationAlreadySent(record)) return 'already_sent';
     const sent = await sendEligibleRegistrationInvitation(record, dependencies);
     if (!sent) return 'already_sent';
     console.info('QuickBooks waived-registration invitation completed.', { invoiceId, source });
@@ -214,18 +218,16 @@ export async function reconcilePaidInvoice(
   });
 
   if (totalCents < record.depositCents || balanceCents > 0) {
-    const expirationAt = paymentInvoiceExpiresAt(record, invoice);
-    if (!record.invoiceExpiresAt) {
-      record.invoiceExpiresAt = expirationAt;
-      await dependencies.saveRegistration(record);
-    }
+    if (!canExpireUnpaidInvoice(record)) return 'unpaid';
+
+    await dependencies.ensurePendingPaymentInvoiceDelivery(record);
+    const expirationAt = paymentInvoiceExpiresAt(record);
 
     const expirationTime = Date.parse(expirationAt);
     const nowTime = Date.parse(dependencies.now());
     const fullyUnpaid = totalCents >= record.depositCents && balanceCents === totalCents;
     if (
       fullyUnpaid
-      && canExpireUnpaidInvoice(record)
       && Number.isFinite(expirationTime)
       && Number.isFinite(nowTime)
       && nowTime >= expirationTime
