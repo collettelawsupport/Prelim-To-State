@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 type RegistrationStatusResponse = {
   bigFormUrl?: string;
+  expired?: boolean;
   invitationSent?: boolean;
   invoiceUrl?: string;
   paid?: boolean;
@@ -17,6 +18,7 @@ export default function InvoiceCreatedPage() {
   const registrationCredentials = useRef({ registrationId: '', statusToken: '' });
   const [invoiceUrl, setInvoiceUrl] = useState('');
   const [bigFormUrl, setBigFormUrl] = useState('');
+  const [expired, setExpired] = useState(false);
   const [paid, setPaid] = useState(false);
   const [paymentSatisfied, setPaymentSatisfied] = useState(false);
   const [waiverApplied, setWaiverApplied] = useState(false);
@@ -39,7 +41,8 @@ export default function InvoiceCreatedPage() {
     fetch(`/api/registration-status?id=${encodeURIComponent(currentRegistrationId)}&token=${encodeURIComponent(currentStatusToken)}`)
       .then((response) => response.json())
       .then((status: RegistrationStatusResponse) => {
-        if (status.invoiceUrl) setInvoiceUrl(status.invoiceUrl);
+        setExpired(Boolean(status.expired));
+        setInvoiceUrl(status.expired ? '' : status.invoiceUrl || '');
         if (status.bigFormUrl) setBigFormUrl(status.bigFormUrl);
         if (status.workflow === 'honor_roll') setRegistrationHome('/honor-roll/');
         setPaid(Boolean(status.paid));
@@ -47,7 +50,9 @@ export default function InvoiceCreatedPage() {
         setWaiverApplied(Boolean(status.waiverApplied));
         setInvitationSent(Boolean(status.invitationSent));
 
-        if (status.waiverApplied) {
+        if (status.expired) {
+          setMessage('The 24-hour payment window ended without a payment, so the unpaid QuickBooks invoice was voided and this registration expired. Please return to the appropriate registration form and submit a new registration if you would still like to participate.');
+        } else if (status.waiverApplied) {
           setMessage(status.invitationSent
             ? 'Your coupon was approved, no payment is due today, and your personalized Big Form is ready below. A copy of the link was also sent to your registration email address.'
             : 'Your coupon was approved and no payment is due today. Your personalized Big Form is ready below; you can open it now without waiting for an email.');
@@ -91,7 +96,7 @@ export default function InvoiceCreatedPage() {
       <section className="center-card">
         <div className="success-mark" aria-hidden="true">✓</div>
         <p className="eyebrow">Registration received</p>
-        <h1>{waiverApplied ? 'Coupon approved' : paid ? 'Payment received' : 'Complete your deposit'}</h1>
+        <h1>{expired ? 'Payment window expired' : waiverApplied ? 'Coupon approved' : paid ? 'Payment received' : 'Complete your deposit'}</h1>
         <p>{message}</p>
 
         <div className="confirmation-actions">
@@ -110,7 +115,7 @@ export default function InvoiceCreatedPage() {
               {resendStatus === 'sending' ? 'Sending email…' : invitationSent ? 'Resend Big Form email' : 'Email me the Big Form link'}
             </button>
           )}
-          {invoiceUrl && !waiverApplied && (
+          {invoiceUrl && !waiverApplied && !expired && (
             <a className="button-secondary" href={invoiceUrl}>{paid ? 'View QuickBooks invoice' : 'Pay QuickBooks invoice'}</a>
           )}
         </div>

@@ -21,6 +21,10 @@ export function invitationIdempotencyKey(record: RegistrationRecord) {
     : `big-form-invitation-${record.id}`;
 }
 
+export function paymentLinkIdempotencyKey(record: RegistrationRecord) {
+  return `registration-payment-link-${record.id}`;
+}
+
 export function configuredInvitationEmailProvider(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): InvitationEmailProvider | null {
@@ -129,6 +133,52 @@ export function buildBigFormInvitationEmail(record: RegistrationRecord, bigFormU
   };
 }
 
+export function buildPaymentInvoiceEmail(record: RegistrationRecord, invoiceUrl: string) {
+  const contestant = `${record.values.contestant_first_name} ${record.values.contestant_last_name}`.trim();
+  const deposit = (record.depositCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const safeInvoiceUrl = escapeHtml(invoiceUrl);
+
+  return {
+    subject: `Complete ${contestant}'s Texas Our Little Miss registration`,
+    text: [
+      'Dear Texas Our Little Miss Family,',
+      '',
+      `We received ${contestant}'s state registration form, but the registration is not complete until the ${deposit} deposit invoice is paid.`,
+      '',
+      'Use the secure QuickBooks link below to return to the invoice and complete payment:',
+      invoiceUrl,
+      '',
+      'The invoice must be paid within 24 hours of registration. If it remains completely unpaid after 24 hours, the invoice will be voided and the registration will expire. A new registration form will then be required.',
+      '',
+      'After QuickBooks confirms the full deposit payment, the personalized Texas State BIG Forms link will be emailed automatically.',
+      '',
+      'If you have already paid, no additional action is needed. QuickBooks payment confirmation can take a few minutes.',
+      '',
+      'With excitement,',
+      '',
+      'Angela',
+      'Texas Our Little Miss',
+      '',
+      'Angela Kyle and Julie Nice',
+      'Texas State Directors',
+      'texasolm2@gmail.com',
+    ].join('\n'),
+    html: `<div style="font-family:Arial,sans-serif;line-height:1.65;color:#321b28;max-width:680px">
+      <p>Dear Texas Our Little Miss Family,</p>
+      <p>We received <strong>${escapeHtml(contestant)}'s</strong> state registration form, but the registration is not complete until the <strong>${escapeHtml(deposit)} deposit invoice</strong> is paid.</p>
+      <p>Use the secure QuickBooks link below to return to the invoice and complete payment:</p>
+      <p style="margin:28px 0"><a href="${safeInvoiceUrl}" style="display:inline-block;background:#70264f;color:#ffffff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:8px">Pay registration invoice</a></p>
+      <p style="font-size:14px;color:#654b5b">If the button does not open, use this link:<br><a href="${safeInvoiceUrl}">${safeInvoiceUrl}</a></p>
+      <p><strong>The invoice must be paid within 24 hours of registration.</strong> If it remains completely unpaid after 24 hours, the invoice will be voided and the registration will expire. A new registration form will then be required.</p>
+      <p>After QuickBooks confirms the full deposit payment, the personalized <strong>Texas State BIG Forms</strong> link will be emailed automatically.</p>
+      <p>If you have already paid, no additional action is needed. QuickBooks payment confirmation can take a few minutes.</p>
+      <p>With excitement,</p>
+      <p><strong>Angela</strong><br>Texas Our Little Miss</p>
+      <p>Angela Kyle and Julie Nice<br>Texas State Directors<br><a href="mailto:texasolm2@gmail.com">texasolm2@gmail.com</a></p>
+    </div>`,
+  };
+}
+
 export async function sendBigFormInvitation(
   record: RegistrationRecord,
   bigFormUrl: string,
@@ -200,5 +250,71 @@ export async function sendBigFormInvitation(
     throw new Error(`Big Form invitation delivery through Resend failed (${response.status}).`);
   }
   logger.info('Big Form invitation delivered.', { provider: 'resend' });
+  return 'resend';
+}
+
+export async function sendPaymentInvoiceEmail(
+  record: RegistrationRecord,
+  invoiceUrl: string,
+  logger: EmailLogger = console,
+): Promise<InvitationEmailProvider | null> {
+  const provider = configuredInvitationEmailProvider();
+  if (!provider) return null;
+
+  const message = buildPaymentInvoiceEmail(record, invoiceUrl);
+  const to = [record.values.email.trim()];
+  if (provider === 'gmail') {
+    const user = process.env.GMAIL_USER!.trim();
+    const appPassword = process.env.GMAIL_APP_PASSWORD!.replace(/\s/g, '');
+    const from = process.env.EMAIL_FROM?.trim() || `Texas Our Little Miss <${user}>`;
+    const transport = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user, pass: appPassword },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
+    });
+    try {
+      await transport.sendMail({
+        from,
+        to,
+        replyTo: user,
+        ...message,
+      });
+    } catch (error) {
+      const details = error && typeof error === 'object' ? error as { code?: unknown; responseCode?: unknown } : {};
+      logger.error('Registration payment-link delivery failed.', {
+        provider: 'gmail',
+        ...(typeof details.code === 'string' ? { code: details.code } : {}),
+        ...(typeof details.responseCode === 'number' ? { status: details.responseCode } : {}),
+      });
+      throw new Error('Registration payment-link delivery through Gmail failed.');
+    }
+    logger.info('Registration payment link delivered.', { provider: 'gmail' });
+    return 'gmail';
+  }
+
+  const apiKey = process.env.RESEND_API_KEY?.trim();
+  const from = process.env.EMAIL_FROM?.trim();
+  if (!apiKey || !from) return null;
+
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${apiKey}`,
+      'content-type': 'application/json',
+      'idempotency-key': paymentLinkIdempotencyKey(record),
+    },
+    body: JSON.stringify({
+      from,
+      to,
+      ...message,
+    }),
+  });
+  if (!response.ok) {
+    logger.error('Registration payment-link delivery failed.', { provider: 'resend', status: response.status });
+    throw new Error(`Registration payment-link delivery through Resend failed (${response.status}).`);
+  }
+  logger.info('Registration payment link delivered.', { provider: 'resend' });
   return 'resend';
 }

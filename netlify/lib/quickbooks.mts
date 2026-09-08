@@ -504,6 +504,25 @@ export async function getInvoice(invoiceId: string) {
   return result.Invoice;
 }
 
+export function buildVoidInvoicePayload(invoiceId: string, syncToken: unknown) {
+  if (!invoiceId.trim()) throw new Error('The QuickBooks invoice ID is missing.');
+  if (typeof syncToken !== 'string' || !syncToken.trim()) {
+    throw new Error('QuickBooks did not return the invoice version required to void it safely.');
+  }
+  return { Id: invoiceId, SyncToken: syncToken };
+}
+
+export async function voidInvoice(invoiceId: string, syncToken: unknown) {
+  const result = await qboRequest<{ Invoice?: Record<string, unknown> }>(`/invoice?operation=void&minorversion=${MINOR_VERSION}`, {
+    method: 'POST',
+    body: JSON.stringify(buildVoidInvoicePayload(invoiceId, syncToken)),
+  });
+  if (!result.Invoice || result.Invoice.Id !== invoiceId) {
+    throw new Error('QuickBooks did not confirm that the unpaid invoice was voided.');
+  }
+  return result.Invoice;
+}
+
 export async function getPayment(paymentId: string) {
   const result = await qboRequest<{ Payment?: Record<string, unknown> }>(`/payment/${encodeURIComponent(paymentId)}?minorversion=${MINOR_VERSION}`);
   if (!result.Payment) throw new Error('QuickBooks did not return the requested payment.');

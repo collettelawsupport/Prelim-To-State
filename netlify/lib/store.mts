@@ -94,6 +94,19 @@ export async function releaseDepositInvoiceClaim(registrationId: string) {
   await store().delete(`invoice-claims/${registrationId}.json`);
 }
 
+export async function claimInvoiceExpiration(registrationId: string) {
+  const result = await store().setJSON(
+    `invoice-expiration-claims/${registrationId}.json`,
+    { claimedAt: new Date().toISOString() },
+    { onlyIfNew: true },
+  );
+  return result.modified;
+}
+
+export async function releaseInvoiceExpirationClaim(registrationId: string) {
+  await store().delete(`invoice-expiration-claims/${registrationId}.json`);
+}
+
 export async function listRegistrationInvoicesAwaitingInvitation(limit = 25) {
   const listed = await store().list({ prefix: 'invoices/' });
   const keys = listed.blobs.map((blob) => blob.key).sort();
@@ -107,6 +120,8 @@ export async function listRegistrationInvoicesAwaitingInvitation(limit = 25) {
     const record = await getRegistrationByInvoice(invoiceId);
     if (
       record?.qbo?.invoiceId
+      && record.status !== 'invoice_expired'
+      && !record.invoiceVoidedAt
       && (!record.bigFormInvitationSentAt || record.bigFormInvitationMethod === 'quickbooks')
     ) result.push(invoiceId);
   }

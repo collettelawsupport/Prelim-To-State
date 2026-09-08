@@ -8,8 +8,10 @@ import {
   BIG_FORM_INVITATION_CC,
   bigFormInvitationRecipients,
   buildBigFormInvitationEmail,
+  buildPaymentInvoiceEmail,
   configuredInvitationEmailProvider,
   invitationIdempotencyKey,
+  paymentLinkIdempotencyKey,
 } from '../netlify/lib/email.mts';
 import {
   BIG_FORM_HANDBOOK_CONTENT_TYPE,
@@ -17,6 +19,11 @@ import {
   loadBigFormHandbookAttachment,
 } from '../netlify/lib/handbook.mts';
 import { publicQuickBooksInvoiceUrl } from '../netlify/lib/invoice-url.mts';
+import {
+  ensurePendingPaymentInvoiceDelivery,
+  paymentInvoiceExpirationAt,
+  UNPAID_INVOICE_EXPIRATION_MS,
+} from '../netlify/lib/pending-payment.mts';
 import {
   InvitationEmailNotConfiguredError,
   InvitationResendTooSoonError,
@@ -26,6 +33,7 @@ import {
 } from '../netlify/lib/paid-registration.mts';
 import {
   assertRegistrationWorkflowReady,
+  buildVoidInvoicePayload,
   completeQuickBooksAuthorization,
   executeQuickBooksRequest,
   missingRegistrationWorkflowSettings,
@@ -249,6 +257,74 @@ test('puts the personalized Texas State BIG Forms link in the full invitation em
   assert.ok(message.text.includes(bigFormUrl));
   assert.doesNotMatch(JSON.stringify(message), /docs\.google\.com\/forms/i);
   assert.doesNotMatch(message.text, /50%|Honor Roll|Winner's Circle/i);
+});
+
+test('emails a resumable QuickBooks payment link with the correct isolated deposit', () => {
+  const invoiceUrl = 'https://app.qbo.intuit.com/app/invoice?txnId=99';
+  const prelimMessage = buildPaymentInvoiceEmail(record, invoiceUrl);
+  assert.match(prelimMessage.subject, /Complete Taylor Sample's Texas Our Little Miss registration/i);
+  assert.match(prelimMessage.text, /\$150\.00 deposit invoice/i);
+  assert.match(prelimMessage.text, /within 24 hours/i);
+  assert.match(prelimMessage.html, />Pay registration invoice<\/a>/);
+  assert.ok(prelimMessage.text.includes(invoiceUrl));
+
+  const honorMessage = buildPaymentInvoiceEmail({
+    ...structuredClone(record),
+    workflow: 'honor_roll',
+    depositCents: 10_000,
+  }, invoiceUrl);
+  assert.match(honorMessage.text, /\$100\.00 deposit invoice/i);
+  assert.doesNotMatch(honorMessage.text, /\$150\.00/);
+  assert.equal(paymentLinkIdempotencyKey(record), `registration-payment-link-${record.id}`);
+});
+
+test('delivers each pending invoice through QuickBooks and a direct resumable-link email only once', async () => {
+  const mutableRecord = structuredClone(record);
+  let quickBooksEmailCount = 0;
+  let directEmailCount = 0;
+  let saveCount = 0;
+  const dependencies = {
+    sendQuickBooksInvoice: async () => {
+      quickBooksEmailCount += 1;
+      return {
+        invoiceNumber: 'OLM-P-111111111111411',
+        invoiceUrl: 'https://app.qbo.intuit.com/app/invoice?txnId=99',
+      };
+    },
+    getInvoice: async () => assert.fail('The link returned by QuickBooks should be reused.'),
+    sendPaymentInvoiceEmail: async (_updated: RegistrationRecord, invoiceUrl: string) => {
+      directEmailCount += 1;
+      assert.match(invoiceUrl, /txnId=99/);
+      return 'gmail' as const;
+    },
+    saveRegistration: async (updated: RegistrationRecord) => {
+      saveCount += 1;
+      return updated;
+    },
+    now: () => '2026-09-01T12:01:00.000Z',
+    logger: quietLogger,
+  };
+
+  const first = await ensurePendingPaymentInvoiceDelivery(mutableRecord, dependencies);
+  assert.equal(first.quickBooksEmailSent, true);
+  assert.equal(first.directEmailSent, true);
+  assert.equal(quickBooksEmailCount, 1);
+  assert.equal(directEmailCount, 1);
+  assert.equal(mutableRecord.quickBooksInvoiceEmailedAt, '2026-09-01T12:01:00.000Z');
+  assert.equal(mutableRecord.paymentLinkEmailSentAt, '2026-09-01T12:01:00.000Z');
+  assert.equal(mutableRecord.paymentLinkEmailMethod, 'gmail');
+  assert.equal(mutableRecord.invoiceExpiresAt, '2026-09-02T12:00:00.000Z');
+  assert.equal(saveCount, 1);
+
+  await ensurePendingPaymentInvoiceDelivery(mutableRecord, dependencies);
+  assert.equal(quickBooksEmailCount, 1);
+  assert.equal(directEmailCount, 1);
+  assert.equal(saveCount, 1);
+});
+
+test('uses a 24-hour unpaid-invoice payment window', () => {
+  assert.equal(UNPAID_INVOICE_EXPIRATION_MS, 86_400_000);
+  assert.equal(paymentInvoiceExpirationAt(record.createdAt), '2026-09-02T12:00:00.000Z');
 });
 
 test('loads the valid PDF attached to each Big Form invitation', async () => {
@@ -511,6 +587,64 @@ test('partial or delayed payment remains pending and sends only after QuickBooks
   assert.equal(invitationCount, 1);
 });
 
+test('voids a completely unpaid registration invoice after 24 hours and marks it expired', async () => {
+  const mutableRecord = structuredClone(record);
+  let voidCount = 0;
+  let releaseCount = 0;
+  const result = await reconcilePaidInvoice('99', 'scheduled', {
+    getRegistrationByInvoice: async () => mutableRecord,
+    getInvoice: async () => ({
+      TotalAmt: 150,
+      Balance: 150,
+      SyncToken: '4',
+      MetaData: { CreateTime: '2026-09-01T12:00:00.000Z' },
+    }),
+    saveRegistration: async (updated: RegistrationRecord) => updated,
+    claimInvoiceExpiration: async () => true,
+    releaseInvoiceExpirationClaim: async () => { releaseCount += 1; },
+    voidInvoice: async (invoiceId: string, syncToken: unknown) => {
+      voidCount += 1;
+      assert.equal(invoiceId, '99');
+      assert.equal(syncToken, '4');
+      return { Id: invoiceId, SyncToken: '5', TotalAmt: 0, Balance: 0 };
+    },
+    now: () => '2026-09-02T12:00:00.000Z',
+  });
+  assert.equal(result, 'expired');
+  assert.equal(voidCount, 1);
+  assert.equal(releaseCount, 1);
+  assert.equal(mutableRecord.status, 'invoice_expired');
+  assert.equal(mutableRecord.invoiceExpiresAt, '2026-09-02T12:00:00.000Z');
+  assert.equal(mutableRecord.invoiceVoidedAt, '2026-09-02T12:00:00.000Z');
+  assert.equal(mutableRecord.qbo?.invoiceUrl, '');
+
+  const status = publicStatus(mutableRecord, { BIG_FORM_URL: 'https://bigforms.example' });
+  assert.equal(status.expired, true);
+  assert.equal(status.invoiceUrl, '');
+  assert.equal(status.paymentSatisfied, false);
+});
+
+test('never expires an invoice with a partial payment even after 24 hours', async () => {
+  const mutableRecord = structuredClone(record);
+  let voidCount = 0;
+  const result = await reconcilePaidInvoice('99', 'scheduled', {
+    getRegistrationByInvoice: async () => mutableRecord,
+    getInvoice: async () => ({ TotalAmt: 150, Balance: 50, SyncToken: '5' }),
+    saveRegistration: async (updated: RegistrationRecord) => updated,
+    claimInvoiceExpiration: async () => assert.fail('A partially paid invoice must not be claimed for expiration.'),
+    releaseInvoiceExpirationClaim: async () => undefined,
+    voidInvoice: async () => {
+      voidCount += 1;
+      return {};
+    },
+    now: () => '2026-09-03T12:00:00.000Z',
+  });
+  assert.equal(result, 'unpaid');
+  assert.equal(voidCount, 0);
+  assert.equal(mutableRecord.status, 'invoice_created');
+  assert.equal(mutableRecord.invoiceVoidedAt, undefined);
+});
+
 test('failed invitation delivery releases its claim so scheduled reconciliation can retry', async () => {
   const mutableRecord = structuredClone(record);
   let deliveryAttempts = 0;
@@ -761,6 +895,12 @@ test('resolves exact active QuickBooks item SKUs and the registration customer',
     quickBooksInvoiceFromQuery({ QueryResponse: { Invoice: [{ Id: 'invoice-99', DocNumber: 'OLM-P-111111111111411' }] } }),
     { Id: 'invoice-99', DocNumber: 'OLM-P-111111111111411' },
   );
+});
+
+test('builds a version-locked QuickBooks void request', () => {
+  assert.deepEqual(buildVoidInvoicePayload('99', '4'), { Id: '99', SyncToken: '4' });
+  assert.throws(() => buildVoidInvoicePayload('99', ''), /version required to void it safely/i);
+  assert.throws(() => buildVoidInvoicePayload('', '4'), /invoice ID is missing/i);
 });
 
 test('disconnect revokes and deletes tokens without logging secrets', async () => {

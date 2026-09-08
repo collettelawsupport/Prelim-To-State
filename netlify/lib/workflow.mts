@@ -280,6 +280,7 @@ export function publicStatus(
   record: RegistrationRecord,
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ) {
+  const expired = record.status === 'invoice_expired' || Boolean(record.invoiceVoidedAt);
   const paymentSatisfied = Boolean(record.paidAt || record.waiver?.appliedAt);
   const directlyEmailed = Boolean(
     record.bigFormInvitationSentAt
@@ -296,6 +297,7 @@ export function publicStatus(
   }
   return {
     workflow: record.workflow,
+    expired,
     paid: Boolean(record.paidAt),
     paymentSatisfied,
     waiverApplied: Boolean(record.waiver?.appliedAt),
@@ -303,6 +305,6 @@ export function publicStatus(
     bigFormUrl,
     paperworkComplete: Boolean(record.bigFormSubmissionId),
     invoiceUpdated: Boolean(record.invoiceUpdatedAt),
-    invoiceUrl: publicQuickBooksInvoiceUrl(record.qbo?.invoiceUrl),
+    invoiceUrl: expired ? '' : publicQuickBooksInvoiceUrl(record.qbo?.invoiceUrl),
   };
 }

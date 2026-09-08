@@ -2,14 +2,16 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { Config } from '@netlify/functions';
 import { registrationConfigurationFor } from '../../app/registration-data.ts';
 import { HttpError, errorResponse, json, readJsonBody, safeErrorDetails } from '../lib/http.mts';
-import { publicQuickBooksInvoiceUrl } from '../lib/invoice-url.mts';
+import {
+  ensurePendingPaymentInvoiceDelivery,
+  paymentInvoiceExpirationAt,
+} from '../lib/pending-payment.mts';
 import { sendEligibleRegistrationInvitation } from '../lib/paid-registration.mts';
 import {
   assertRegistrationWorkflowReady,
   createCustomer,
   createDepositInvoice,
   registrationFallbackUrl,
-  sendInvoice,
 } from '../lib/quickbooks.mts';
 import {
   createRegistration,
@@ -30,6 +32,9 @@ import {
 
 async function ensureInvoice(record: RegistrationRecord) {
   let activeRecord = record;
+  if (activeRecord.status === 'invoice_expired' || activeRecord.invoiceVoidedAt) {
+    throw new HttpError('This unpaid invoice expired after 24 hours. Please begin a new registration.', 409);
+  }
   activeRecord.qbo ||= {};
   if (!activeRecord.qbo.invoiceId) {
     if (!await claimDepositInvoice(activeRecord.id)) {
@@ -52,6 +57,9 @@ async function ensureInvoice(record: RegistrationRecord) {
         }
         const invoice = await createDepositInvoice(activeRecord);
         activeRecord.qbo = { ...activeRecord.qbo, ...invoice };
+        const invoiceCreatedAt = new Date().toISOString();
+        activeRecord.invoiceCreatedAt ||= invoiceCreatedAt;
+        activeRecord.invoiceExpiresAt ||= paymentInvoiceExpirationAt(activeRecord.invoiceCreatedAt);
         activeRecord.status = 'invoice_created';
         await saveRegistration(activeRecord);
         await mapInvoice(invoice.invoiceId, activeRecord.id);
@@ -61,10 +69,10 @@ async function ensureInvoice(record: RegistrationRecord) {
     }
   }
   if (!activeRecord.qbo.invoiceId) throw new Error('The QuickBooks invoice ID is missing.');
+  let deliveredInvoiceUrl = activeRecord.qbo.invoiceUrl || '';
   if (!activeRecord.waiver?.appliedAt) {
-    const sent = await sendInvoice(activeRecord.qbo.invoiceId, activeRecord.values.email);
-    activeRecord.qbo.invoiceNumber = sent.invoiceNumber || activeRecord.qbo.invoiceNumber;
-    activeRecord.qbo.invoiceUrl = sent.invoiceUrl || publicQuickBooksInvoiceUrl(activeRecord.qbo.invoiceUrl);
+    const delivery = await ensurePendingPaymentInvoiceDelivery(activeRecord);
+    deliveredInvoiceUrl = delivery.invoiceUrl || deliveredInvoiceUrl;
   }
   activeRecord.status = activeRecord.waiver?.appliedAt
     ? 'payment_waived'
@@ -75,7 +83,7 @@ async function ensureInvoice(record: RegistrationRecord) {
     record: activeRecord,
     nextUrl: activeRecord.waiver?.appliedAt
       ? registrationFallbackUrl(activeRecord)
-      : activeRecord.qbo.invoiceUrl || registrationFallbackUrl(activeRecord),
+      : deliveredInvoiceUrl || registrationFallbackUrl(activeRecord),
   };
 }
 

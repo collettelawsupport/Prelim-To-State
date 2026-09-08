@@ -1,17 +1,23 @@
 import { sendBigFormInvitation as deliverBigFormInvitation } from './email.mts';
-import { getInvoice as loadQuickBooksInvoice } from './quickbooks.mts';
+import { paymentInvoiceExpiresAt } from './pending-payment.mts';
+import {
+  getInvoice as loadQuickBooksInvoice,
+  voidInvoice as voidQuickBooksInvoice,
+} from './quickbooks.mts';
 import {
   claimBigFormInvitation as acquireInvitationClaim,
   claimBigFormInvitationResend as acquireInvitationResendClaim,
+  claimInvoiceExpiration as acquireInvoiceExpirationClaim,
   getRegistrationByInvoice as loadRegistrationByInvoice,
   releaseBigFormInvitationClaim as releaseInvitationClaim,
   releaseBigFormInvitationResendClaim as releaseInvitationResendClaim,
+  releaseInvoiceExpirationClaim as releaseExpirationClaim,
   saveRegistration as persistRegistration,
 } from './store.mts';
 import type { RegistrationRecord } from './types.mts';
 import { buildBigFormUrl } from './workflow.mts';
 
-export type PaidInvoiceResult = 'already_sent' | 'missing_registration' | 'sent' | 'unpaid';
+export type PaidInvoiceResult = 'already_sent' | 'expired' | 'missing_registration' | 'sent' | 'unpaid';
 export const INVITATION_RESEND_COOLDOWN_MS = 60_000;
 
 export class InvitationEmailNotConfiguredError extends Error {
@@ -44,6 +50,9 @@ export type PaidRegistrationDependencies = {
   releaseBigFormInvitationClaim: (registrationId: string) => Promise<void>;
   claimBigFormInvitationResend: (registrationId: string) => Promise<boolean>;
   releaseBigFormInvitationResendClaim: (registrationId: string) => Promise<void>;
+  claimInvoiceExpiration: (registrationId: string) => Promise<boolean>;
+  releaseInvoiceExpirationClaim: (registrationId: string) => Promise<void>;
+  voidInvoice: (invoiceId: string, syncToken: unknown) => Promise<Record<string, unknown>>;
   bigFormUrl?: string;
   now: () => string;
 };
@@ -57,6 +66,9 @@ const defaultDependencies: PaidRegistrationDependencies = {
   releaseBigFormInvitationClaim: releaseInvitationClaim,
   claimBigFormInvitationResend: acquireInvitationResendClaim,
   releaseBigFormInvitationResendClaim: releaseInvitationResendClaim,
+  claimInvoiceExpiration: acquireInvoiceExpirationClaim,
+  releaseInvoiceExpirationClaim: releaseExpirationClaim,
+  voidInvoice: voidQuickBooksInvoice,
   now: () => new Date().toISOString(),
 };
 
@@ -72,6 +84,20 @@ function paymentRequirementSatisfied(record: RegistrationRecord) {
 
 function directInvitationAlreadySent(record: RegistrationRecord) {
   return Boolean(record.bigFormInvitationSentAt && record.bigFormInvitationMethod !== 'quickbooks');
+}
+
+function moneyInCents(value: unknown) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? Math.round(amount * 100) : 0;
+}
+
+function canExpireUnpaidInvoice(record: RegistrationRecord) {
+  return !record.waiver?.appliedAt
+    && !record.paidAt
+    && !record.bigFormSubmissionId
+    && !record.invoiceUpdatedAt
+    && !record.invoiceVoidedAt
+    && record.status !== 'invoice_expired';
 }
 
 export async function sendEligibleRegistrationInvitation(
@@ -167,6 +193,7 @@ export async function reconcilePaidInvoice(
   const dependencies = { ...defaultDependencies, ...dependencyOverrides };
   const record = await dependencies.getRegistrationByInvoice(invoiceId);
   if (!record) return 'missing_registration';
+  if (record.status === 'invoice_expired' || record.invoiceVoidedAt) return 'expired';
   if (directInvitationAlreadySent(record)) return 'already_sent';
 
   if (record.waiver?.appliedAt) {
@@ -177,16 +204,53 @@ export async function reconcilePaidInvoice(
   }
 
   const invoice = await dependencies.getInvoice(invoiceId);
-  const total = Number(invoice.TotalAmt || 0);
-  const balance = Number(invoice.Balance || 0);
+  const totalCents = moneyInCents(invoice.TotalAmt);
+  const balanceCents = moneyInCents(invoice.Balance);
   console.info('QuickBooks invoice payment check completed.', {
     invoiceId,
     source,
-    total,
-    balance,
+    total: totalCents / 100,
+    balance: balanceCents / 100,
   });
 
-  if (total < record.depositCents / 100 || balance > 0) return 'unpaid';
+  if (totalCents < record.depositCents || balanceCents > 0) {
+    const expirationAt = paymentInvoiceExpiresAt(record, invoice);
+    if (!record.invoiceExpiresAt) {
+      record.invoiceExpiresAt = expirationAt;
+      await dependencies.saveRegistration(record);
+    }
+
+    const expirationTime = Date.parse(expirationAt);
+    const nowTime = Date.parse(dependencies.now());
+    const fullyUnpaid = totalCents >= record.depositCents && balanceCents === totalCents;
+    if (
+      fullyUnpaid
+      && canExpireUnpaidInvoice(record)
+      && Number.isFinite(expirationTime)
+      && Number.isFinite(nowTime)
+      && nowTime >= expirationTime
+    ) {
+      if (!await dependencies.claimInvoiceExpiration(record.id)) return 'unpaid';
+      try {
+        await dependencies.voidInvoice(invoiceId, invoice.SyncToken);
+        const voidedAt = dependencies.now();
+        record.status = 'invoice_expired';
+        record.invoiceVoidedAt = voidedAt;
+        record.invoiceExpiresAt = expirationAt;
+        if (record.qbo) record.qbo.invoiceUrl = '';
+        delete record.lastError;
+        await dependencies.saveRegistration(record);
+        console.info('Completely unpaid QuickBooks registration invoice was voided after 24 hours.', {
+          invoiceId,
+          source,
+        });
+        return 'expired';
+      } finally {
+        await dependencies.releaseInvoiceExpirationClaim(record.id).catch(() => undefined);
+      }
+    }
+    return 'unpaid';
+  }
 
   const sent = await sendPaidInvitation(record, dependencies);
   if (!sent) return 'already_sent';

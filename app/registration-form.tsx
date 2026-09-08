@@ -438,7 +438,7 @@ export default function RegistrationForm({ configuration }: { configuration: Reg
               {waiverCodeEntered && <div><span>Credit on updated invoice</span><strong>{formatCurrency(configuration.waiverCreditCents)}</strong></div>}
               <small>{waiverCodeEntered
                 ? 'Selecting Submit verifies the code securely. If it is valid, no payment screen opens and the personalized Big Form link is emailed immediately. The code is not saved with the contestant registration.'
-                : `Selecting Continue creates and emails the QuickBooks invoice, then opens its secure payment screen. The registration remains pending and the contestant's place is not secured until the deposit is paid. QuickBooks applies the payment to this invoice automatically. ${configuration.afterBigFormCopy}`}</small>
+                : `Selecting Continue creates and emails the QuickBooks invoice, sends a separate payment-link email, then opens the secure payment screen. The registration remains pending and the contestant's place is not secured until the deposit is paid. A completely unpaid invoice is voided and the registration expires after 24 hours. QuickBooks applies the payment to this invoice automatically. ${configuration.afterBigFormCopy}`}</small>
             </aside>
           </section>
 

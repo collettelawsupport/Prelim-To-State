@@ -5,6 +5,7 @@ export type RegistrationStatus =
   | 'submitted'
   | 'invoice_error'
   | 'invoice_created'
+  | 'invoice_expired'
   | 'payment_waived'
   | 'paid'
   | 'paperwork_complete'
@@ -28,6 +29,12 @@ export type RegistrationRecord = {
     invoiceNumber?: string;
     invoiceUrl?: string;
   };
+  invoiceCreatedAt?: string;
+  invoiceExpiresAt?: string;
+  invoiceVoidedAt?: string;
+  quickBooksInvoiceEmailedAt?: string;
+  paymentLinkEmailSentAt?: string;
+  paymentLinkEmailMethod?: 'gmail' | 'resend';
   waiver?: {
     creditCents: number;
     appliedAt: string;

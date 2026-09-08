@@ -10,12 +10,12 @@ There is no contestant-facing workflow selector, comparison page, or cross-link 
 ## Shared workflow
 
 1. The contestant completes the appropriate isolated registration form, accepts its release, and signs it.
-2. The app stores the workflow with the registration, finds or creates the QuickBooks customer, creates the correct deposit invoice, and emails it. A valid server-verified waiver code instead records no payment due today and a fixed $100 registration credit.
-3. The registration remains pending until QuickBooks reports that the complete workflow-specific deposit is paid, unless an approved waiver satisfies the initial payment requirement immediately.
-4. Signed Intuit `Payment` and `Invoice` webhooks trigger payment checks. A five-minute scheduled reconciliation recovers delayed or missed events.
+2. The app stores the workflow with the registration, finds or creates the QuickBooks customer, creates the correct deposit invoice, emails it through QuickBooks, and sends a separate Texas OLM payment-link email. A valid server-verified waiver code instead records no payment due today and applies the workflow-specific registration credit.
+3. The registration remains pending until QuickBooks reports that the complete workflow-specific deposit is paid, unless an approved waiver satisfies the initial payment requirement immediately. A completely unpaid invoice is voided and the registration expires after 24 hours; paid, partially paid, waived, and completed registrations are never expired by this cleanup.
+4. Signed Intuit `Payment` and `Invoice` webhooks trigger payment checks. A five-minute scheduled reconciliation recovers delayed or missed events, retries missing payment-link delivery, and expires eligible unpaid invoices.
 5. The confirmation page immediately exposes the secured, personalized Big Form link. Gmail or Resend also emails the same link with `workflow=prelim` or `workflow=honor_roll`, attaches the 2026 Texas State Handbook PDF, copies `texasolm2@gmail.com`, and lets the contestant request a rate-limited resend to the stored registration address.
 6. The Big Form callback is routed back to this shared service and validated with the shared callback secret, contestant workflow token, and expected classification.
-7. QuickBooks updates the original invoice with the full entry fee and known Big Form charges. Honor Roll discounts apply only to eligible Honor Roll optionals; Prelim optionals remain full price. The paid deposit remains applied, or an approved waiver adds the fixed $100 registration discount.
+7. QuickBooks updates the original invoice with the full entry fee and known Big Form charges. Honor Roll discounts apply only to eligible Honor Roll optionals; Prelim optionals remain full price. The paid deposit remains applied, or an approved waiver adds the workflow-specific registration discount.
 
 The workflows use distinct QuickBooks document prefixes (`OLM-P-` and `OLM-H-`) while sharing one QuickBooks authorization, webhook, item catalog, email configuration, and Netlify Blobs store.
 
@@ -66,9 +66,9 @@ RESEND_API_KEY=
 
 Netlify does not read a repository `.env` during cloud builds; import the values into the project environment. Keep real `.env` files, tokens, client secrets, Gmail app passwords, setup keys, verifier tokens, and callback secrets out of GitHub.
 
-Direct Big Form email requires either both `GMAIL_USER` and `GMAIL_APP_PASSWORD`, or both `RESEND_API_KEY` and `EMAIL_FROM`. Gmail takes priority when both providers are present. QuickBooks invoice email is not treated as Big Form delivery. If the email provider is temporarily unavailable, the registration still succeeds and the secured Big Form link remains available on the confirmation page; scheduled reconciliation retries automatic delivery, and the contestant can use the resend button after email service is restored.
+Direct payment-link and Big Form email requires either both `GMAIL_USER` and `GMAIL_APP_PASSWORD`, or both `RESEND_API_KEY` and `EMAIL_FROM`. Gmail takes priority when both providers are present. QuickBooks invoice email is not treated as Big Form delivery. If the email provider is temporarily unavailable, scheduled reconciliation retries automatic delivery, and the contestant can use the secured status page after payment to open or resend the Big Form.
 
-`REGISTRATION_WAIVER_CODE` is optional and must be treated as a secret. When configured, the same code works on both isolated registration forms. A valid code skips payment today, sends the Big Form immediately, and adds a fixed $100 discount to the updated QuickBooks invoice. The submitted code is verified only on the server and is never stored in the registration record. Use a long, hard-to-guess code and rotate it in Netlify whenever needed.
+`REGISTRATION_WAIVER_CODE` is optional and must be treated as a secret. When configured, the same code works on both isolated registration forms. A valid code skips payment today, sends the Big Form immediately, and adds the workflow-specific registration discount ($150 for Preliminary or $100 for Honor Roll) to the updated QuickBooks invoice. The submitted code is verified only on the server and is never stored in the registration record. Use a long, hard-to-guess code and rotate it in Netlify whenever needed.
 
 Production registrations and OAuth tokens use the `olm-state-registration-production` Netlify Blobs store. Sandbox uses `olm-state-registration`, so sandbox records cannot be processed against the live company.
 
