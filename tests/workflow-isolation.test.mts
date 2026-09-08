@@ -76,9 +76,10 @@ test('exposes only the selected workflow pricing in each rendered configuration'
   const honor = JSON.stringify(registrationConfigurationFor('honor_roll'));
 
   assert.match(prelim, /\$150/);
+  assert.match(prelim, /Rodeo Parade\/Fair/);
   assert.doesNotMatch(prelim, /\$100|Honor Roll|Winner's Circle/);
   assert.match(honor, /\$100/);
-  assert.doesNotMatch(honor, /\$150|standard entry fee is \$660|Won QUEEN\/KING/);
+  assert.doesNotMatch(honor, /\$150|standard entry fee is \$660|Won QUEEN\/KING|Rodeo Parade\/Fair/);
 });
 
 test('uses the official state age divisions without Prince divisions', () => {
@@ -107,13 +108,16 @@ test('server validation rejects entry levels submitted through the wrong form', 
 
 test('routes each paid contestant to the matching Big Form classification', () => {
   const prelim = registration('prelim', 'queen_king');
+  const rodeoParadeFair = registration('prelim', 'rodeo_parade_fair');
   const honor = registration('honor_roll', 'honor_roll');
   const winner = registration('honor_roll', 'winners_circle_125');
 
   assert.equal(classificationForEntryLevel(prelim.values.entry_level, prelim.workflow), 'New Contestant');
+  assert.equal(classificationForEntryLevel(rodeoParadeFair.values.entry_level, rodeoParadeFair.workflow), 'New Contestant');
   assert.equal(classificationForEntryLevel(honor.values.entry_level, honor.workflow), 'Honor Roll');
   assert.equal(classificationForEntryLevel(winner.values.entry_level, winner.workflow), "Winner's Circle");
   assert.equal(new URL(buildBigFormUrl(prelim, 'https://forms.example.com')).searchParams.get('workflow'), 'prelim');
+  assert.equal(new URL(buildBigFormUrl(rodeoParadeFair, 'https://forms.example.com')).searchParams.get('workflow'), 'prelim');
   assert.equal(new URL(buildBigFormUrl(honor, 'https://forms.example.com')).searchParams.get('workflow'), 'honor_roll');
 });
 

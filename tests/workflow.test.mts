@@ -133,6 +133,7 @@ test('preserves every published Prelim entry choice and fee', () => {
     [
       ['preregistration', 35_000],
       ['queen_king', 37_000],
+      ['rodeo_parade_fair', 37_000],
       ['princess', 38_000],
       ['personality_mini_queen', 39_000],
       ['alternate', 40_000],

@@ -20,6 +20,7 @@ export const ageDivisions = [
 export const entryLevels = [
   { value: 'preregistration', label: 'PreRegistration before Preliminary Pageant', feeCents: 35_000 },
   { value: 'queen_king', label: 'Won QUEEN/KING at Preliminary Pageant', feeCents: 37_000 },
+  { value: 'rodeo_parade_fair', label: 'Rodeo Parade/Fair', feeCents: 37_000 },
   { value: 'princess', label: 'Won PRINCESS at Preliminary Pageant', feeCents: 38_000 },
   { value: 'personality_mini_queen', label: 'Won PERSONALITY/MINI QUEEN at Preliminary Pageant', feeCents: 39_000 },
   { value: 'alternate', label: 'Won Alternate at Preliminary Pageant', feeCents: 40_000 },
