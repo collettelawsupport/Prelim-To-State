@@ -14,6 +14,7 @@ export default async function registrationReadiness(request: Request) {
       invitationEmailReady: Boolean(emailProvider),
       invitationEmailProvider: emailProvider || '',
       invitationEmailCc: BIG_FORM_INVITATION_CC,
+      registrationWaiverReady: Boolean(process.env.REGISTRATION_WAIVER_CODE?.trim()),
     });
   } catch (error) {
     return errorResponse(error, 'Online invoice registration is temporarily unavailable.');

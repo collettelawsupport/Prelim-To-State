@@ -50,10 +50,10 @@ export type PaidRegistrationDependencies = {
   ensurePendingPaymentInvoiceDelivery: (record: RegistrationRecord) => Promise<unknown>;
   saveRegistration: (record: RegistrationRecord) => Promise<RegistrationRecord>;
   sendBigFormInvitation: typeof deliverBigFormInvitation;
-  claimBigFormInvitation: (registrationId: string) => Promise<boolean>;
-  releaseBigFormInvitationClaim: (registrationId: string) => Promise<void>;
-  claimBigFormInvitationResend: (registrationId: string) => Promise<boolean>;
-  releaseBigFormInvitationResendClaim: (registrationId: string) => Promise<void>;
+  claimBigFormInvitation: (registrationId: string) => Promise<boolean | string | null>;
+  releaseBigFormInvitationClaim: (registrationId: string, token?: boolean | string) => Promise<void>;
+  claimBigFormInvitationResend: (registrationId: string) => Promise<boolean | string | null>;
+  releaseBigFormInvitationResendClaim: (registrationId: string, token?: boolean | string) => Promise<void>;
   claimInvoiceExpiration: (registrationId: string) => Promise<boolean>;
   releaseInvoiceExpirationClaim: (registrationId: string) => Promise<void>;
   voidInvoice: (invoiceId: string, syncToken: unknown) => Promise<Record<string, unknown>>;
@@ -120,7 +120,8 @@ export async function sendEligibleRegistrationInvitation(
   if (record.bigFormInvitationMethod === 'quickbooks') {
     await dependencies.releaseBigFormInvitationClaim(record.id).catch(() => undefined);
   }
-  if (!await dependencies.claimBigFormInvitation(record.id)) return false;
+  const invitationClaim = await dependencies.claimBigFormInvitation(record.id);
+  if (!invitationClaim) return false;
 
   try {
     const emailProvider = await dependencies.sendBigFormInvitation(
@@ -134,7 +135,7 @@ export async function sendEligibleRegistrationInvitation(
     await dependencies.saveRegistration(record);
     return true;
   } finally {
-    await dependencies.releaseBigFormInvitationClaim(record.id).catch(() => undefined);
+    await dependencies.releaseBigFormInvitationClaim(record.id, invitationClaim).catch(() => undefined);
   }
 }
 
@@ -157,7 +158,8 @@ export async function resendRegistrationInvitation(
     }
   }
 
-  if (!await dependencies.claimBigFormInvitationResend(record.id)) {
+  const resendClaim = await dependencies.claimBigFormInvitationResend(record.id);
+  if (!resendClaim) {
     throw new InvitationDeliveryBusyError();
   }
 
@@ -177,7 +179,7 @@ export async function resendRegistrationInvitation(
     await dependencies.saveRegistration(record);
     return emailProvider;
   } finally {
-    await dependencies.releaseBigFormInvitationResendClaim(record.id).catch(() => undefined);
+    await dependencies.releaseBigFormInvitationResendClaim(record.id, resendClaim).catch(() => undefined);
   }
 }
 

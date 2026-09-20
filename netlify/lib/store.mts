@@ -1,8 +1,16 @@
 import { getStore } from '@netlify/blobs';
+import { randomUUID } from 'node:crypto';
 import type { RegistrationRecord, RegistrationWorkflow } from './types.mts';
 
 const SANDBOX_STORE_NAME = 'olm-state-registration';
 const PRODUCTION_STORE_NAME = 'olm-state-registration-production';
+export const INVITATION_CLAIM_STALE_MS = 10 * 60 * 1000;
+
+type StoredClaim = {
+  claimedAt?: string;
+  releasedAt?: string;
+  token?: string;
+};
 
 export function registrationStoreName(environment = process.env.QBO_ENVIRONMENT) {
   return environment?.trim().toLowerCase() === 'production'
@@ -55,30 +63,68 @@ export async function getRegistrationByInvoice(invoiceId: string) {
   return mapping?.registrationId ? getRegistration(mapping.registrationId) : null;
 }
 
-export async function claimBigFormInvitation(registrationId: string) {
-  const result = await store().setJSON(
-    `invitation-claims/${registrationId}.json`,
-    { claimedAt: new Date().toISOString() },
-    { onlyIfNew: true },
-  );
-  return result.modified;
+export function invitationClaimIsStale(
+  claimedAt: string | undefined,
+  now = Date.now(),
+  staleAfterMs = INVITATION_CLAIM_STALE_MS,
+) {
+  if (!claimedAt) return false;
+  const claimTime = Date.parse(claimedAt);
+  return !Number.isFinite(claimTime) || now - claimTime >= staleAfterMs;
 }
 
-export async function releaseBigFormInvitationClaim(registrationId: string) {
-  await store().delete(`invitation-claims/${registrationId}.json`);
+async function acquireRecoverableClaim(key: string) {
+  const currentStore = store();
+  const token = randomUUID();
+  const now = Date.now();
+  const claim = { claimedAt: new Date(now).toISOString(), token };
+  const created = await currentStore.setJSON(key, claim, { onlyIfNew: true });
+  if (created.modified) return token;
+
+  const existing = await currentStore.getWithMetadata(key, { type: 'json' }) as {
+    data: StoredClaim;
+    etag?: string;
+  } | null;
+  if (!existing?.etag || !invitationClaimIsStale(existing.data?.claimedAt, now)) return null;
+
+  const recovered = await currentStore.setJSON(key, claim, { onlyIfMatch: existing.etag });
+  return recovered.modified ? token : null;
+}
+
+async function releaseRecoverableClaim(key: string, token?: string | boolean) {
+  const currentStore = store();
+  const existing = await currentStore.getWithMetadata(key, { type: 'json' }) as {
+    data: StoredClaim;
+    etag?: string;
+  } | null;
+  if (!existing?.etag) return;
+  const ownedToken = typeof token === 'string' && token ? token : undefined;
+  if (ownedToken ? existing.data?.token !== ownedToken : Boolean(existing.data?.token)) return;
+
+  // Replace the owned claim before deleting it so an old worker cannot remove
+  // a newer claim that recovered after the stale timeout.
+  const released = await currentStore.setJSON(
+    key,
+    { releasedAt: new Date().toISOString(), token: ownedToken },
+    { onlyIfMatch: existing.etag },
+  );
+  if (released.modified) await currentStore.delete(key);
+}
+
+export async function claimBigFormInvitation(registrationId: string) {
+  return acquireRecoverableClaim(`invitation-claims/${registrationId}.json`);
+}
+
+export async function releaseBigFormInvitationClaim(registrationId: string, token?: string | boolean) {
+  await releaseRecoverableClaim(`invitation-claims/${registrationId}.json`, token);
 }
 
 export async function claimBigFormInvitationResend(registrationId: string) {
-  const result = await store().setJSON(
-    `invitation-resend-claims/${registrationId}.json`,
-    { claimedAt: new Date().toISOString() },
-    { onlyIfNew: true },
-  );
-  return result.modified;
+  return acquireRecoverableClaim(`invitation-resend-claims/${registrationId}.json`);
 }
 
-export async function releaseBigFormInvitationResendClaim(registrationId: string) {
-  await store().delete(`invitation-resend-claims/${registrationId}.json`);
+export async function releaseBigFormInvitationResendClaim(registrationId: string, token?: string | boolean) {
+  await releaseRecoverableClaim(`invitation-resend-claims/${registrationId}.json`, token);
 }
 
 export async function claimDepositInvoice(registrationId: string) {

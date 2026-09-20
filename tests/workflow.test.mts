@@ -48,6 +48,8 @@ import {
   refreshQuickBooksTokens,
 } from '../netlify/lib/quickbooks.mts';
 import {
+  INVITATION_CLAIM_STALE_MS,
+  invitationClaimIsStale,
   registrationNeedsInvoiceReconciliation,
   registrationStoreName,
   type QuickBooksTokens,
@@ -827,6 +829,20 @@ test('an existing invitation claim prevents concurrent duplicate delivery', asyn
     now: () => '2026-09-01T13:00:00.000Z',
   }), 'already_sent');
   assert.equal(invitationCount, 0);
+});
+
+test('invitation claims recover after a worker interruption but stay exclusive while fresh', () => {
+  const now = Date.parse('2026-09-20T12:00:00.000Z');
+  assert.equal(
+    invitationClaimIsStale(new Date(now - INVITATION_CLAIM_STALE_MS + 1).toISOString(), now),
+    false,
+  );
+  assert.equal(
+    invitationClaimIsStale(new Date(now - INVITATION_CLAIM_STALE_MS).toISOString(), now),
+    true,
+  );
+  assert.equal(invitationClaimIsStale('invalid timestamp', now), true);
+  assert.equal(invitationClaimIsStale(undefined, now), false);
 });
 
 test('scheduled reconciliation is configured every five minutes', () => {
