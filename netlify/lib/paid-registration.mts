@@ -1,4 +1,9 @@
-import { sendBigFormInvitation as deliverBigFormInvitation } from './email.mts';
+import {
+  InvitationDeliveryError,
+  invitationFailureDetails,
+  sendBigFormInvitation as deliverBigFormInvitation,
+  sendInvitationFailureAlert as deliverFailureAlert,
+} from './email.mts';
 import {
   ensurePendingPaymentInvoiceDelivery as deliverPendingPaymentInvoice,
   paymentInvoiceExpiresAt,
@@ -12,6 +17,7 @@ import {
   claimBigFormInvitationResend as acquireInvitationResendClaim,
   claimInvoiceExpiration as acquireInvoiceExpirationClaim,
   getRegistrationByInvoice as loadRegistrationByInvoice,
+  getRegistration as loadRegistration,
   releaseBigFormInvitationClaim as releaseInvitationClaim,
   releaseBigFormInvitationResendClaim as releaseInvitationResendClaim,
   releaseInvoiceExpirationClaim as releaseExpirationClaim,
@@ -20,12 +26,12 @@ import {
 import type { RegistrationRecord } from './types.mts';
 import { buildBigFormUrl } from './workflow.mts';
 
-export type PaidInvoiceResult = 'already_sent' | 'expired' | 'missing_registration' | 'sent' | 'unpaid';
+export type PaidInvoiceResult = 'already_sent' | 'expired' | 'missing_registration' | 'retry_pending' | 'sent' | 'unpaid';
 export const INVITATION_RESEND_COOLDOWN_MS = 60_000;
 
-export class InvitationEmailNotConfiguredError extends Error {
+export class InvitationEmailNotConfiguredError extends InvitationDeliveryError {
   constructor() {
-    super('Direct Big Form email delivery is not configured.');
+    super({ reason: 'Direct Big Form email delivery is not configured.', errorCode: 'EMAIL_NOT_CONFIGURED' });
   }
 }
 
@@ -45,11 +51,13 @@ export class InvitationDeliveryBusyError extends Error {
 }
 
 export type PaidRegistrationDependencies = {
+  getRegistration: (id: string) => Promise<RegistrationRecord | null>;
   getRegistrationByInvoice: (invoiceId: string) => Promise<RegistrationRecord | null>;
   getInvoice: (invoiceId: string) => Promise<Record<string, unknown>>;
   ensurePendingPaymentInvoiceDelivery: (record: RegistrationRecord) => Promise<unknown>;
   saveRegistration: (record: RegistrationRecord) => Promise<RegistrationRecord>;
   sendBigFormInvitation: typeof deliverBigFormInvitation;
+  sendInvitationFailureAlert: typeof deliverFailureAlert;
   claimBigFormInvitation: (registrationId: string) => Promise<boolean | string | null>;
   releaseBigFormInvitationClaim: (registrationId: string, token?: boolean | string) => Promise<void>;
   claimBigFormInvitationResend: (registrationId: string) => Promise<boolean | string | null>;
@@ -62,11 +70,13 @@ export type PaidRegistrationDependencies = {
 };
 
 const defaultDependencies: PaidRegistrationDependencies = {
+  getRegistration: loadRegistration,
   getRegistrationByInvoice: loadRegistrationByInvoice,
   getInvoice: loadQuickBooksInvoice,
   ensurePendingPaymentInvoiceDelivery: deliverPendingPaymentInvoice,
   saveRegistration: persistRegistration,
   sendBigFormInvitation: deliverBigFormInvitation,
+  sendInvitationFailureAlert: deliverFailureAlert,
   claimBigFormInvitation: acquireInvitationClaim,
   releaseBigFormInvitationClaim: releaseInvitationClaim,
   claimBigFormInvitationResend: acquireInvitationResendClaim,
@@ -79,7 +89,9 @@ const defaultDependencies: PaidRegistrationDependencies = {
 
 function personalizedBigFormUrl(record: RegistrationRecord, dependencies: PaidRegistrationDependencies) {
   const baseUrl = dependencies.bigFormUrl?.trim() || process.env.BIG_FORM_URL?.trim();
-  if (!baseUrl) throw new Error('BIG_FORM_URL is not configured.');
+  if (!baseUrl) throw new InvitationDeliveryError({
+    reason: 'BIG_FORM_URL is not configured.', errorCode: 'BIG_FORM_URL_MISSING',
+  });
   return buildBigFormUrl(record, baseUrl);
 }
 
@@ -88,7 +100,92 @@ function paymentRequirementSatisfied(record: RegistrationRecord) {
 }
 
 function directInvitationAlreadySent(record: RegistrationRecord) {
-  return Boolean(record.bigFormInvitationSentAt && record.bigFormInvitationMethod !== 'quickbooks');
+  return Boolean(record.bigFormInvitationSentAt
+    && (record.bigFormInvitationMethod === 'gmail' || record.bigFormInvitationMethod === 'resend'));
+}
+
+export function invitationRetryDelayMs(retryCount: number) {
+  return [5, 15, 30, 60][Math.min(3, Math.max(0, Math.trunc(retryCount) - 1))] * 60_000;
+}
+
+export function invitationRetryIsDue(record: RegistrationRecord, now = Date.now()) {
+  const nextAttempt = Date.parse(record.bigFormInvitationNextAttemptAt || '');
+  return !Number.isFinite(nextAttempt) || nextAttempt <= now;
+}
+
+async function refreshInvitationRecord(record: RegistrationRecord, dependencies: PaidRegistrationDependencies) {
+  const latest = await dependencies.getRegistration(record.id);
+  if (!latest) throw new Error('Registration not found.');
+  if (latest !== record) {
+    // The caller keeps this object too (notably submit-registration). Refresh in
+    // place so a later caller save cannot overwrite the failure we just recorded.
+    for (const key of Object.keys(record)) {
+      if (!(key in latest)) delete (record as unknown as Record<string, unknown>)[key];
+    }
+    Object.assign(record, latest);
+  }
+}
+
+async function notifyInvitationFailure(record: RegistrationRecord, dependencies: PaidRegistrationDependencies) {
+  if (!record.bigFormInvitationFailure || record.bigFormInvitationFailure.alertSentAt) return;
+  try {
+    const provider = await dependencies.sendInvitationFailureAlert(record);
+    if (!provider) return;
+    record.bigFormInvitationFailure.alertSentAt = dependencies.now();
+    await dependencies.saveRegistration(record);
+  } catch (error) {
+    // Never recurse into another alert if the mail provider itself is down.
+    console.error('Big Form failure alert remains pending.', {
+      errorCode: invitationFailureDetails(error).errorCode,
+    });
+  }
+}
+
+async function deliverInvitation(record: RegistrationRecord, dependencies: PaidRegistrationDependencies) {
+  const attemptedAt = dependencies.now();
+  if (record.bigFormInvitationLastAttemptAt) {
+    record.bigFormInvitationAttempt = Math.max(0, Math.trunc(record.bigFormInvitationAttempt || 0)) + 1;
+  }
+  record.bigFormInvitationLastAttemptAt = attemptedAt;
+  // Persist before contacting the provider. A killed worker remains queued and
+  // a retry uses a fresh provider idempotency key rather than a cached failure.
+  record.bigFormInvitationNextAttemptAt = new Date(Date.parse(attemptedAt) + 5 * 60_000).toISOString();
+  await dependencies.saveRegistration(record);
+
+  let emailProvider;
+  try {
+    emailProvider = await dependencies.sendBigFormInvitation(record, personalizedBigFormUrl(record, dependencies));
+    if (!emailProvider) throw new InvitationEmailNotConfiguredError();
+  } catch (error) {
+    const failedAt = dependencies.now();
+    const previous = record.bigFormInvitationFailure?.resolvedAt ? undefined : record.bigFormInvitationFailure;
+    record.bigFormInvitationFailure = {
+      ...invitationFailureDetails(error),
+      firstFailedAt: previous?.firstFailedAt || failedAt,
+      lastFailedAt: failedAt,
+      ...(previous?.alertSentAt ? { alertSentAt: previous.alertSentAt } : {}),
+    };
+    record.bigFormInvitationRetryCount = (record.bigFormInvitationRetryCount || 0) + 1;
+    record.bigFormInvitationNextAttemptAt = new Date(
+      Date.parse(failedAt) + invitationRetryDelayMs(record.bigFormInvitationRetryCount),
+    ).toISOString();
+    record.lastError = record.bigFormInvitationFailure.reason;
+    delete record.bigFormInvitationSentAt;
+    delete record.bigFormInvitationMethod;
+    await dependencies.saveRegistration(record);
+    await notifyInvitationFailure(record, dependencies);
+    throw error;
+  }
+
+  record.bigFormInvitationMethod = emailProvider;
+  record.bigFormInvitationSentAt = dependencies.now();
+  if (record.bigFormInvitationFailure) record.bigFormInvitationFailure.resolvedAt = record.bigFormInvitationSentAt;
+  delete record.bigFormInvitationNextAttemptAt;
+  delete record.bigFormInvitationRetryCount;
+  delete record.lastError;
+  await dependencies.saveRegistration(record);
+  await notifyInvitationFailure(record, dependencies);
+  return emailProvider;
 }
 
 function moneyInCents(value: unknown) {
@@ -114,6 +211,7 @@ export async function sendEligibleRegistrationInvitation(
     throw new Error('The registration payment requirement has not been satisfied.');
   }
   if (directInvitationAlreadySent(record)) return false;
+  if (!invitationRetryIsDue(record, Date.parse(dependencies.now()))) return false;
 
   // Earlier versions left a permanent claim after using QuickBooks as an email
   // fallback. Release that legacy claim so those registrations can be retried.
@@ -124,15 +222,12 @@ export async function sendEligibleRegistrationInvitation(
   if (!invitationClaim) return false;
 
   try {
-    const emailProvider = await dependencies.sendBigFormInvitation(
-      record,
-      personalizedBigFormUrl(record, dependencies),
-    );
-    if (!emailProvider) throw new InvitationEmailNotConfiguredError();
-    record.bigFormInvitationMethod = emailProvider;
-    record.bigFormInvitationSentAt = dependencies.now();
-    delete record.lastError;
-    await dependencies.saveRegistration(record);
+    await refreshInvitationRecord(record, dependencies);
+    if (!paymentRequirementSatisfied(record) || record.invoiceVoidedAt || record.status === 'invoice_expired') {
+      throw new Error('The registration is not eligible for a Big Form invitation.');
+    }
+    if (directInvitationAlreadySent(record) || !invitationRetryIsDue(record, Date.parse(dependencies.now()))) return false;
+    await deliverInvitation(record, dependencies);
     return true;
   } finally {
     await dependencies.releaseBigFormInvitationClaim(record.id, invitationClaim).catch(() => undefined);
@@ -164,20 +259,17 @@ export async function resendRegistrationInvitation(
   }
 
   try {
-    record.bigFormInvitationAttempt = Math.max(0, Math.trunc(record.bigFormInvitationAttempt || 0)) + 1;
-    record.bigFormInvitationLastAttemptAt = now;
-    await dependencies.saveRegistration(record);
-
-    const emailProvider = await dependencies.sendBigFormInvitation(
-      record,
-      personalizedBigFormUrl(record, dependencies),
-    );
-    if (!emailProvider) throw new InvitationEmailNotConfiguredError();
-    record.bigFormInvitationMethod = emailProvider;
-    record.bigFormInvitationSentAt = now;
-    delete record.lastError;
-    await dependencies.saveRegistration(record);
-    return emailProvider;
+    await refreshInvitationRecord(record, dependencies);
+    if (!paymentRequirementSatisfied(record) || record.invoiceVoidedAt || record.status === 'invoice_expired') {
+      throw new Error('The registration is not eligible for a Big Form invitation.');
+    }
+    const latestAttempt = Date.parse(record.bigFormInvitationLastAttemptAt || '');
+    if (Number.isFinite(latestAttempt) && nowTime - latestAttempt < INVITATION_RESEND_COOLDOWN_MS) {
+      throw new InvitationResendTooSoonError(Math.max(1, Math.ceil((INVITATION_RESEND_COOLDOWN_MS - (nowTime - latestAttempt)) / 1_000)));
+    }
+    // Preserve the first manual resend's historical "-1" idempotency key.
+    if (!record.bigFormInvitationLastAttemptAt) record.bigFormInvitationAttempt = Math.max(0, Math.trunc(record.bigFormInvitationAttempt || 0)) + 1;
+    return await deliverInvitation(record, dependencies);
   } finally {
     await dependencies.releaseBigFormInvitationResendClaim(record.id, resendClaim).catch(() => undefined);
   }
@@ -201,11 +293,25 @@ export async function reconcilePaidInvoice(
   const record = await dependencies.getRegistrationByInvoice(invoiceId);
   if (!record) return 'missing_registration';
   if (record.status === 'invoice_expired' || record.invoiceVoidedAt) return 'expired';
-  if (record.waiver?.appliedAt) {
-    if (directInvitationAlreadySent(record)) return 'already_sent';
+  if (paymentRequirementSatisfied(record)) {
+    if (directInvitationAlreadySent(record)) {
+      if (record.bigFormInvitationFailure && !record.bigFormInvitationFailure.alertSentAt) {
+        const claim = await dependencies.claimBigFormInvitation(record.id);
+        if (claim) {
+          try {
+            await refreshInvitationRecord(record, dependencies);
+            await notifyInvitationFailure(record, dependencies);
+          } finally {
+            await dependencies.releaseBigFormInvitationClaim(record.id, claim).catch(() => undefined);
+          }
+        }
+      }
+      return 'already_sent';
+    }
+    if (!invitationRetryIsDue(record, Date.parse(dependencies.now()))) return 'retry_pending';
     const sent = await sendEligibleRegistrationInvitation(record, dependencies);
     if (!sent) return 'already_sent';
-    console.info('QuickBooks waived-registration invitation completed.', { invoiceId, source });
+    console.info('Eligible registration invitation completed.', { invoiceId, source });
     return 'sent';
   }
 

@@ -14,6 +14,7 @@ export default async function registrationReadiness(request: Request) {
       invitationEmailReady: Boolean(emailProvider),
       invitationEmailProvider: emailProvider || '',
       invitationEmailCc: BIG_FORM_INVITATION_CC,
+      invitationDeliveryVersion: 'recipient-verified-v1',
       registrationWaiverReady: Boolean(process.env.REGISTRATION_WAIVER_CODE?.trim()),
     });
   } catch (error) {

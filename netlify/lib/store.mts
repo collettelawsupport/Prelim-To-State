@@ -12,6 +12,11 @@ type StoredClaim = {
   token?: string;
 };
 
+type ClaimStore = {
+  setJSON: (key: string, data: unknown, options: { onlyIfNew: true; onlyIfMatch?: never } | { onlyIfNew?: never; onlyIfMatch: string }) => Promise<{ modified: boolean }>;
+  getWithMetadata: (key: string, options: { type: 'json' }) => Promise<unknown>;
+};
+
 export function registrationStoreName(environment = process.env.QBO_ENVIRONMENT) {
   return environment?.trim().toLowerCase() === 'production'
     ? PRODUCTION_STORE_NAME
@@ -42,6 +47,14 @@ export async function createRegistration(record: RegistrationRecord) {
 export async function saveRegistration(record: RegistrationRecord) {
   record.updatedAt = new Date().toISOString();
   await store().setJSON(`registrations/${record.id}.json`, record);
+  if (record.qbo?.invoiceId) {
+    const key = `reconciliation-pending/${record.qbo.invoiceId}.json`;
+    if (registrationNeedsInvoiceReconciliation(record)) {
+      await store().setJSON(key, { registrationId: record.id });
+    } else {
+      await store().delete(key);
+    }
+  }
   return record;
 }
 
@@ -73,8 +86,7 @@ export function invitationClaimIsStale(
   return !Number.isFinite(claimTime) || now - claimTime >= staleAfterMs;
 }
 
-async function acquireRecoverableClaim(key: string) {
-  const currentStore = store();
+async function acquireRecoverableClaim(key: string, currentStore: ClaimStore = store()) {
   const token = randomUUID();
   const now = Date.now();
   const claim = { claimedAt: new Date(now).toISOString(), token };
@@ -91,8 +103,7 @@ async function acquireRecoverableClaim(key: string) {
   return recovered.modified ? token : null;
 }
 
-async function releaseRecoverableClaim(key: string, token?: string | boolean) {
-  const currentStore = store();
+async function releaseRecoverableClaim(key: string, token?: string | boolean, currentStore: ClaimStore = store()) {
   const existing = await currentStore.getWithMetadata(key, { type: 'json' }) as {
     data: StoredClaim;
     etag?: string;
@@ -101,30 +112,29 @@ async function releaseRecoverableClaim(key: string, token?: string | boolean) {
   const ownedToken = typeof token === 'string' && token ? token : undefined;
   if (ownedToken ? existing.data?.token !== ownedToken : Boolean(existing.data?.token)) return;
 
-  // Replace the owned claim before deleting it so an old worker cannot remove
-  // a newer claim that recovered after the stale timeout.
-  const released = await currentStore.setJSON(
+  // Leave a stale, CAS-protected tombstone instead of deleting after release:
+  // an old worker must never delete a newer worker's recovered claim.
+  await currentStore.setJSON(
     key,
-    { releasedAt: new Date().toISOString(), token: ownedToken },
+    { claimedAt: new Date(0).toISOString(), releasedAt: new Date().toISOString(), token: ownedToken },
     { onlyIfMatch: existing.etag },
   );
-  if (released.modified) await currentStore.delete(key);
 }
 
-export async function claimBigFormInvitation(registrationId: string) {
-  return acquireRecoverableClaim(`invitation-claims/${registrationId}.json`);
+export async function claimBigFormInvitation(registrationId: string, claimStore?: ClaimStore) {
+  return acquireRecoverableClaim(`invitation-claims/${registrationId}.json`, claimStore);
 }
 
-export async function releaseBigFormInvitationClaim(registrationId: string, token?: string | boolean) {
-  await releaseRecoverableClaim(`invitation-claims/${registrationId}.json`, token);
+export async function releaseBigFormInvitationClaim(registrationId: string, token?: string | boolean, claimStore?: ClaimStore) {
+  await releaseRecoverableClaim(`invitation-claims/${registrationId}.json`, token, claimStore);
 }
 
-export async function claimBigFormInvitationResend(registrationId: string) {
-  return acquireRecoverableClaim(`invitation-resend-claims/${registrationId}.json`);
+export async function claimBigFormInvitationResend(registrationId: string, claimStore?: ClaimStore) {
+  return claimBigFormInvitation(registrationId, claimStore);
 }
 
-export async function releaseBigFormInvitationResendClaim(registrationId: string, token?: string | boolean) {
-  await releaseRecoverableClaim(`invitation-resend-claims/${registrationId}.json`, token);
+export async function releaseBigFormInvitationResendClaim(registrationId: string, token?: string | boolean, claimStore?: ClaimStore) {
+  await releaseBigFormInvitationClaim(registrationId, token, claimStore);
 }
 
 export async function claimDepositInvoice(registrationId: string) {
@@ -164,22 +174,80 @@ export function registrationNeedsInvoiceReconciliation(record: RegistrationRecor
     && !record.bigFormSubmissionId
     && !record.invoiceUpdatedAt;
   const invitationPending = Boolean(record.paidAt || record.waiver?.appliedAt) && !directInvitationSent;
-  return initialPaymentPending || invitationPending;
+  const alertPending = Boolean(record.bigFormInvitationFailure && !record.bigFormInvitationFailure.alertSentAt);
+  return initialPaymentPending || invitationPending || alertPending;
 }
 
-export async function listRegistrationInvoicesAwaitingInvitation(limit = 25) {
-  const listed = await store().list({ prefix: 'invoices/' });
-  const keys = listed.blobs.map((blob) => blob.key).sort();
-  if (!keys.length) return [];
+type ReconciliationCursor = { pendingOffset?: number; legacyOffset?: number };
+type ReconciliationListingDependencies = {
+  listKeys: (prefix: string) => Promise<string[]>;
+  getRegistrationByInvoice: typeof getRegistrationByInvoice;
+  loadCursor: () => Promise<ReconciliationCursor | null>;
+  saveCursor: (cursor: ReconciliationCursor) => Promise<void>;
+  now: () => number;
+};
 
+export async function listRegistrationInvoicesAwaitingInvitation(
+  limit = 5,
+  overrides: Partial<ReconciliationListingDependencies> = {},
+) {
+  const dependencies: ReconciliationListingDependencies = {
+    listKeys: async (prefix) => (await store().list({ prefix })).blobs.map((blob) => blob.key).sort(),
+    getRegistrationByInvoice,
+    loadCursor: async () => store().get('reconciliation/cursor.json', { type: 'json' }),
+    saveCursor: async (cursor) => { await store().setJSON('reconciliation/cursor.json', cursor); },
+    now: Date.now,
+    ...overrides,
+  };
+  const deadline = dependencies.now() + 8_000;
+  const [pendingKeys, legacyKeys, savedCursor] = await Promise.all([
+    dependencies.listKeys('reconciliation-pending/'),
+    dependencies.listKeys('invoices/'),
+    dependencies.loadCursor(),
+  ]);
+  const cursor = { ...savedCursor };
   const result: string[] = [];
-  const start = Math.floor(Date.now() / (5 * 60 * 1000)) % keys.length;
-  for (let offset = 0; offset < keys.length && result.length < limit; offset += 1) {
-    const key = keys[(start + offset) % keys.length];
-    const invoiceId = key.slice('invoices/'.length).replace(/\.json$/, '');
-    const record = await getRegistrationByInvoice(invoiceId);
-    if (record && registrationNeedsInvoiceReconciliation(record)) result.push(invoiceId);
+  const seen = new Set<string>();
+  const maximum = Math.max(1, Math.min(25, Math.trunc(limit) || 5));
+  const sources = [
+    { keys: pendingKeys, prefix: 'reconciliation-pending/', cursorKey: 'pendingOffset' as const },
+    { keys: legacyKeys, prefix: 'invoices/', cursorKey: 'legacyOffset' as const },
+  ];
+  for (const source of sources) {
+    const count = Math.min(100, source.keys.length);
+    const start = Math.max(0, Math.trunc(cursor[source.cursorKey] || 0)) % (source.keys.length || 1);
+    // New/failed deliveries have a small pending index. The bounded, concurrent
+    // legacy scan also recovers older records without scanning all history on
+    // every 30-second scheduled invocation.
+    for (let offset = 0; offset < count && result.length < maximum && dependencies.now() < deadline; offset += 10) {
+      const size = Math.min(10, count - offset);
+      const invoiceIds = Array.from({ length: size }, (_unused, index) =>
+        source.keys[(start + offset + index) % source.keys.length].slice(source.prefix.length).replace(/\.json$/, ''));
+      const checked = await Promise.allSettled(invoiceIds.map(async (invoiceId) => {
+        if (seen.has(invoiceId)) return null;
+        seen.add(invoiceId);
+        const record = await dependencies.getRegistrationByInvoice(invoiceId);
+        const nextAttempt = Date.parse(record?.bigFormInvitationNextAttemptAt || '');
+        return record && registrationNeedsInvoiceReconciliation(record)
+          && (!Number.isFinite(nextAttempt) || nextAttempt <= dependencies.now()) ? invoiceId : null;
+      }));
+      for (let index = 0; index < checked.length; index += 1) {
+        const entry = checked[index];
+        // A bad or temporarily unavailable record must not block every other
+        // invitation. The rotating scan revisits it on a later invocation.
+        if (entry.status === 'rejected') {
+          console.error('Invitation reconciliation record could not be read.', { invoiceId: invoiceIds[index] });
+        } else if (entry.value) {
+          result.push(entry.value);
+        }
+        // Stop at the last selected record, not the end of the fetched batch:
+        // otherwise a full batch can repeatedly skip its last five records.
+        cursor[source.cursorKey] = (start + offset + index + 1) % source.keys.length;
+        if (result.length >= maximum) break;
+      }
+    }
   }
+  await dependencies.saveCursor(cursor);
   return result;
 }
 

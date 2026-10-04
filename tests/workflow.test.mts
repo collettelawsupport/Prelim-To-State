@@ -511,6 +511,7 @@ test('does not mark an invitation sent when no direct email provider is configur
   let releasedClaims = 0;
   await assert.rejects(
     () => sendEligibleRegistrationInvitation(mutableRecord, {
+      getRegistration: async () => mutableRecord,
       saveRegistration: async (updated: RegistrationRecord) => updated,
       sendBigFormInvitation: async () => null,
       claimBigFormInvitation: async () => true,
@@ -534,6 +535,7 @@ test('retries registrations previously marked sent through the QuickBooks fallba
   };
   let releasedClaims = 0;
   assert.equal(await sendEligibleRegistrationInvitation(mutableRecord, {
+    getRegistration: async () => mutableRecord,
     saveRegistration: async (updated: RegistrationRecord) => updated,
     sendBigFormInvitation: async () => 'resend' as const,
     claimBigFormInvitation: async () => true,
@@ -558,6 +560,7 @@ test('manual resend delivers to the stored address with a fresh attempt and rate
   let releases = 0;
   let saves = 0;
   const dependencies = {
+    getRegistration: async () => mutableRecord,
     saveRegistration: async (updated: RegistrationRecord) => {
       saves += 1;
       return updated;
@@ -603,6 +606,7 @@ test('paid-invoice reconciliation sends one invitation and is idempotent on dupl
   let invitationCount = 0;
   let saveCount = 0;
   const dependencies = {
+    getRegistration: async () => mutableRecord,
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => ({ TotalAmt: 150, Balance: 0 }),
     saveRegistration: async (updated: RegistrationRecord) => {
@@ -625,7 +629,7 @@ test('paid-invoice reconciliation sends one invitation and is idempotent on dupl
   assert.equal(mutableRecord.status, 'paid');
   assert.equal(mutableRecord.bigFormInvitationMethod, 'gmail');
   assert.equal(mutableRecord.bigFormInvitationSentAt, '2026-09-01T13:00:00.000Z');
-  assert.equal(saveCount, 2);
+  assert.equal(saveCount, 3);
 });
 
 test('approved waiver sends the Big Form without checking for a QuickBooks payment', async () => {
@@ -639,6 +643,7 @@ test('approved waiver sends the Big Form without checking for a QuickBooks payme
   };
   let invitationCount = 0;
   assert.equal(await reconcilePaidInvoice('99', 'scheduled', {
+    getRegistration: async () => mutableRecord,
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => assert.fail('A waived registration must not wait for invoice payment.'),
     ensurePendingPaymentInvoiceDelivery: async () => assert.fail('A waived registration must not receive a payment email.'),
@@ -663,6 +668,7 @@ test('partial or delayed payment remains pending and sends only after QuickBooks
   let balance = 50;
   let invitationCount = 0;
   const dependencies = {
+    getRegistration: async () => mutableRecord,
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => ({ TotalAmt: 150, Balance: balance }),
     ensurePendingPaymentInvoiceDelivery: confirmPaymentInvoiceDelivery,
@@ -791,7 +797,9 @@ test('failed invitation delivery releases its claim so scheduled reconciliation 
   const mutableRecord = structuredClone(record);
   let deliveryAttempts = 0;
   let releasedClaims = 0;
+  let now = '2026-09-01T13:00:00.000Z';
   const dependencies = {
+    getRegistration: async () => mutableRecord,
     getRegistrationByInvoice: async () => mutableRecord,
     getInvoice: async () => ({ TotalAmt: 150, Balance: 0 }),
     saveRegistration: async (updated: RegistrationRecord) => updated,
@@ -803,11 +811,13 @@ test('failed invitation delivery releases its claim so scheduled reconciliation 
     claimBigFormInvitation: async () => true,
     releaseBigFormInvitationClaim: async () => { releasedClaims += 1; },
     bigFormUrl: 'https://bigforms.example',
-    now: () => '2026-09-01T13:00:00.000Z',
+    now: () => now,
   };
   await assert.rejects(() => reconcilePaidInvoice('99', 'webhook', dependencies), /simulated delivery outage/);
   assert.equal(releasedClaims, 1);
   assert.equal(mutableRecord.bigFormInvitationSentAt, undefined);
+  assert.equal(await reconcilePaidInvoice('99', 'scheduled', dependencies), 'retry_pending');
+  now = '2026-09-01T13:05:00.000Z';
   assert.equal(await reconcilePaidInvoice('99', 'scheduled', dependencies), 'sent');
   assert.equal(deliveryAttempts, 2);
 });

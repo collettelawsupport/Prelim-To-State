@@ -6,7 +6,10 @@ import { listRegistrationInvoicesAwaitingInvitation } from '../lib/store.mts';
 const BATCH_SIZE = 5;
 
 export default async function reconcileQuickBooksPayments() {
-  const invoiceIds = await listRegistrationInvoicesAwaitingInvitation(25);
+  // One concurrent batch fits the scheduled function's 30-second limit even
+  // when invitation delivery (12s) and its one-time alert (5s) both time out.
+  // The persisted listing cursors give other pending records the next turn.
+  const invoiceIds = await listRegistrationInvoicesAwaitingInvitation(BATCH_SIZE);
   let sent = 0;
   let expired = 0;
 

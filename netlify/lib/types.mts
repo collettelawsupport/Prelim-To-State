@@ -11,6 +11,18 @@ export type RegistrationStatus =
   | 'paperwork_complete'
   | 'invoice_updated';
 
+export type InvitationFailure = {
+  firstFailedAt: string;
+  lastFailedAt: string;
+  reason: string;
+  errorCode: string;
+  provider?: 'gmail' | 'resend';
+  status?: number;
+  directorCopyAccepted?: boolean;
+  alertSentAt?: string;
+  resolvedAt?: string;
+};
+
 export type RegistrationRecord = {
   id: string;
   workflow: RegistrationWorkflow;
@@ -45,6 +57,9 @@ export type RegistrationRecord = {
   bigFormInvitationMethod?: 'gmail' | 'resend' | 'quickbooks';
   bigFormInvitationAttempt?: number;
   bigFormInvitationLastAttemptAt?: string;
+  bigFormInvitationRetryCount?: number;
+  bigFormInvitationNextAttemptAt?: string;
+  bigFormInvitationFailure?: InvitationFailure;
   bigFormSubmissionId?: string;
   invoiceUpdatedAt?: string;
   lastError?: string;
